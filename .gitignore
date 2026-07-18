@@ -1,0 +1,19 @@
+﻿# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+frontend/dist/
+
+# النماذج الثقيلة
+backend/weights/
+backend/sam2-main/
+*.pt
+*.pth
+*.safetensors
+
+# ملفات نظام التشغيل
+.DS_Store
+Thumbs.db
