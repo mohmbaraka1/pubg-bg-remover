@@ -9,8 +9,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
+    "framer-motion": "^12.42.2",
+    "konva": "^10.3.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-konva": "^18.2.16",
+    "react-router-dom": "^7.18.1",
+    "use-image": "^1.1.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
