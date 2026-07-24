@@ -4,8 +4,6 @@ import { supabase } from "../lib/supabase";
 import ManualEraser from "./ManualEraser";
 
 const API_URL = "/api/remove-background";
-const PREPARE_URL = "/api/remove-background/prepare";
-const TUNE_URL = "/api/remove-background/tune";
 const MAX_FILES = 100;
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -46,13 +44,6 @@ export default function BackgroundRemover() {
 
   const [queue, setQueue] = useState([]); // { id, file, name, beforeUrl, afterUrl, afterBlob, status, error }
   const [editingItemId, setEditingItemId] = useState(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [useCustomSettings, setUseCustomSettings] = useState(false);
-  const [lowThresh, setLowThresh] = useState(0.28);
-  const [highThresh, setHighThresh] = useState(0.6);
-  const [paddingX, setPaddingX] = useState(0.4);
-  const [paddingY, setPaddingY] = useState(0.15);
-  const [useBlackBgRefine, setUseBlackBgRefine] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const fileInputRef = useRef(null);
@@ -166,67 +157,11 @@ export default function BackgroundRemover() {
     }
   };
 
-  const tuneItem = async (item) => {
-    updateItem(item.id, { status: ITEM_STATUS.PROCESSING, error: "" });
-    try {
-      const formData = new FormData();
-      formData.append("session_id", item.sessionId);
-      formData.append("low_thresh", lowThresh);
-      formData.append("high_thresh", highThresh);
-      formData.append("capture_padding_x", paddingX);
-      formData.append("capture_padding_y", paddingY);
-
-      const res = await fetch(TUNE_URL, { method: "POST", body: formData });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `فشل الطلب (HTTP ${res.status})`);
-      }
-      const blob = await res.blob();
-      const afterUrl = URL.createObjectURL(blob);
-      updateItem(item.id, { status: ITEM_STATUS.DONE, afterUrl, afterBlob: blob });
-
-      if (accountId) {
-        await saveToAccount({ ...item, afterBlob: blob });
-      }
-    } catch (err) {
-      updateItem(item.id, { status: ITEM_STATUS.ERROR, error: err.message || "فشل التعديل." });
-    }
-  };
-
   const processItem = async (item) => {
-    // بوضع الإعدادات المخصصة: نحضّر الجلسة مرة وحدة (ثقيلة)، وبعدها كل
-    // تعديل بالشرائط يستخدم /tune فقط (سريعة، بدون إعادة تشغيل النماذج).
-    if (useCustomSettings) {
-      if (item.sessionId) {
-        await tuneItem(item);
-        return;
-      }
-      updateItem(item.id, { status: ITEM_STATUS.PROCESSING, error: "" });
-      try {
-        const formData = new FormData();
-        formData.append("file", item.file);
-        const res = await fetch(PREPARE_URL, { method: "POST", body: formData });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `فشل التحضير (HTTP ${res.status})`);
-        }
-        const { session_id } = await res.json();
-        updateItem(item.id, { sessionId: session_id });
-        await tuneItem({ ...item, sessionId: session_id });
-      } catch (err) {
-        updateItem(item.id, { status: ITEM_STATUS.ERROR, error: err.message || "فشل التحضير." });
-      }
-      return;
-    }
-
-    // الوضع الافتراضي (بدون إعدادات مخصصة): معالجة عادية بضغطة واحدة
     updateItem(item.id, { status: ITEM_STATUS.PROCESSING, error: "" });
     try {
       const formData = new FormData();
       formData.append("file", item.file);
-      if (useBlackBgRefine) {
-        formData.append("use_black_bg_refine", "true");
-      }
       const res = await fetch(API_URL, { method: "POST", body: formData });
 
       if (!res.ok) {
@@ -341,107 +276,6 @@ export default function BackgroundRemover() {
           </p>
         </header>
 
-        <div className="mb-6">
-          <button
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="text-neutral-500 hover:text-neutral-300 text-xs underline underline-offset-2 mb-2"
-          >
-            {showAdvanced ? "▲ إخفاء" : "▼ إظهار"} الإعدادات المتقدمة (للحالات الصعبة)
-          </button>
-
-          <label className="flex items-center gap-2 text-xs text-neutral-400 mb-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useBlackBgRefine}
-              onChange={(e) => setUseBlackBgRefine(e.target.checked)}
-              className="accent-amber-500"
-            />
-            🖤 تجربة: تسويد الخلفية التقريبية قبل التحليل (للعناصر اللامعة/الشفافة)
-          </label>
-
-          {showAdvanced && (
-            <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-              <label className="flex items-center gap-2 text-sm text-neutral-300 mb-4 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useCustomSettings}
-                  onChange={(e) => setUseCustomSettings(e.target.checked)}
-                  className="accent-amber-500"
-                />
-                استخدام إعدادات مخصصة (بدل الافتراضية المضبوطة)
-              </label>
-
-              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${!useCustomSettings ? "opacity-40 pointer-events-none" : ""}`}>
-                <div>
-                  <label className="text-neutral-400 text-xs block mb-1">
-                    العتبة السفلية (low_thresh): {lowThresh.toFixed(2)}
-                    <span className="text-neutral-600"> — أقل = يحافظ على أجزاء شفافة أكثر، لكن قد ترجع ضبابية بالخلفية</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0.02}
-                    max={0.5}
-                    step={0.01}
-                    value={lowThresh}
-                    onChange={(e) => setLowThresh(Number(e.target.value))}
-                    className="w-full accent-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-neutral-400 text-xs block mb-1">
-                    العتبة العليا (high_thresh): {highThresh.toFixed(2)}
-                    <span className="text-neutral-600"> — أقل = يحوّل الأجزاء نصف الشفافة لمعتمة أسرع</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0.3}
-                    max={0.9}
-                    step={0.01}
-                    value={highThresh}
-                    onChange={(e) => setHighThresh(Number(e.target.value))}
-                    className="w-full accent-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-neutral-400 text-xs block mb-1">
-                    هامش الالتقاط الأفقي: {(paddingX * 100).toFixed(0)}%
-                    <span className="text-neutral-600"> — أكبر = يمسك سلاح ممتد أكثر، لكن قد يمسك عناصر جانبية</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0.1}
-                    max={0.9}
-                    step={0.02}
-                    value={paddingX}
-                    onChange={(e) => setPaddingX(Number(e.target.value))}
-                    className="w-full accent-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-neutral-400 text-xs block mb-1">
-                    هامش الالتقاط العمودي: {(paddingY * 100).toFixed(0)}%
-                  </label>
-                  <input
-                    type="range"
-                    min={0.02}
-                    max={0.5}
-                    step={0.02}
-                    value={paddingY}
-                    onChange={(e) => setPaddingY(Number(e.target.value))}
-                    className="w-full accent-amber-500"
-                  />
-                </div>
-              </div>
-
-              <p className="text-neutral-600 text-[11px] mt-3">
-                💡 أول مرة تعالج فيها صورة بالإعدادات المخصصة تاخذ وقتها المعتاد
-                (كشف + تحليل). بعدها، أي تعديل بالشرائط يطبَّق بضغطة "🎚 تطبيق
-                الإعدادات الحالية" بثوانٍ بس (بدون إعادة الكشف من الصفر).
-              </p>
-            </div>
-          )}
-        </div>
-
         {/* منطقة الرفع */}
         <div
           onDrop={onDrop}
@@ -555,18 +389,6 @@ export default function BackgroundRemover() {
                         إعادة المحاولة
                       </button>
                     )}
-                    {useCustomSettings &&
-                      item.sessionId &&
-                      (item.status === ITEM_STATUS.DONE ||
-                        item.status === ITEM_STATUS.SAVED ||
-                        item.status === ITEM_STATUS.SAVE_ERROR) && (
-                        <button
-                          onClick={() => tuneItem(item)}
-                          className="text-emerald-400 text-xs underline underline-offset-2 text-start"
-                        >
-                          🎚 تطبيق الإعدادات الحالية (سريع)
-                        </button>
-                      )}
                     {(item.status === ITEM_STATUS.DONE ||
                       item.status === ITEM_STATUS.SAVED ||
                       item.status === ITEM_STATUS.SAVE_ERROR) &&

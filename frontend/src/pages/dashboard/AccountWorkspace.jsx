@@ -68,6 +68,10 @@ export default function AccountWorkspace() {
     navigate(`/app?accountId=${id}&category=${activeCategory}`);
   };
 
+  const goToMultiTool = () => {
+    navigate(`/app-multi?accountId=${id}&category=${activeCategory}`);
+  };
+
   if (loading) return <p className="text-neutral-500 text-sm">جارِ التحميل...</p>;
 
   if (!account) {
@@ -96,6 +100,12 @@ export default function AccountWorkspace() {
           className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
         >
           + إزالة خلفية وحفظ بـ {CATEGORIES.find((c) => c.key === activeCategory)?.label}
+        </button>
+        <button
+          onClick={goToMultiTool}
+          className="bg-blue-500 hover:bg-blue-400 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+        >
+          👥 استخراج عدة شخصيات من صورة واحدة
         </button>
       </div>
 

@@ -80,7 +80,6 @@ export default function GridExtractor() {
   const [regions, setRegions] = useState([]); // مستطيلات متعددة
   const [selectedRegionId, setSelectedRegionId] = useState(null);
   const [threshold, setThreshold] = useState(70);
-  const [detectionMethod, setDetectionMethod] = useState("projection");
   const [cells, setCells] = useState([]);
   const [typesByCategory, setTypesByCategory] = useState({});
   const [upscaleBeforeSave, setUpscaleBeforeSave] = useState(false);
@@ -174,7 +173,6 @@ export default function GridExtractor() {
         formData.append("rect_w", realW);
         formData.append("rect_h", realH);
         formData.append("saturation_threshold", threshold);
-        formData.append("method", detectionMethod);
 
         // eslint-disable-next-line no-await-in-loop
         const res = await fetch(GRID_SLICE_API, { method: "POST", body: formData });
@@ -328,17 +326,6 @@ export default function GridExtractor() {
         <>
           <div className="flex gap-3 items-end flex-wrap mb-4">
             <div>
-              <label className="text-neutral-400 text-xs block mb-1">طريقة الاكتشاف</label>
-              <select
-                value={detectionMethod}
-                onChange={(e) => setDetectionMethod(e.target.value)}
-                className="bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2 text-neutral-100 text-sm outline-none"
-              >
-                <option value="projection">تحليل خطي (الافتراضية)</option>
-                <option value="color">ألوان الإطارات (تجريبية)</option>
-              </select>
-            </div>
-            <div>
               <label className="text-neutral-400 text-xs block mb-1">حساسية الاكتشاف</label>
               <input
                 type="range"
@@ -347,7 +334,6 @@ export default function GridExtractor() {
                 value={threshold}
                 onChange={(e) => setThreshold(Number(e.target.value))}
                 className="w-32"
-                disabled={detectionMethod === "color"}
               />
               <span className="text-neutral-500 text-xs ml-2">{threshold}</span>
             </div>

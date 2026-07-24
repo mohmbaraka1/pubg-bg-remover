@@ -1,0 +1,50 @@
+تعليمات تركيب Template Manager
+================================
+
+هاد الملف الضغط فيه ملفين جاهزين:
+  src/pages/TemplateManager.jsx
+  src/pages/TemplateManager.css
+
+الخطوات:
+--------
+
+1) فك ضغط الملف بأي مكان (مثلاً سطح المكتب).
+
+2) انسخ مجلد src\pages بالكامل (اللي جوا الضغط) وحطه/ادمجه جوا:
+   C:\Users\HP\Desktop\pubg-bg-remover\frontend\src\pages
+
+   (يعني الملفين النهائيين لازم يصيروا موجودين بهاد المسار بالضبط:
+   C:\Users\HP\Desktop\pubg-bg-remover\frontend\src\pages\TemplateManager.jsx
+   C:\Users\HP\Desktop\pubg-bg-remover\frontend\src\pages\TemplateManager.css )
+
+   ⚠️ هاد مسار الفرونت إند (frontend) -- مش الباك إند (backend).
+   إذا عندك ملفات أخرى بمجلد pages أصلاً (Welcome.jsx, Login.jsx, ...) خليهم متل ما هم،
+   بس ضيف هالملفين الجداد جنبهم.
+
+3) افتح ملف:
+   C:\Users\HP\Desktop\pubg-bg-remover\frontend\src\App.jsx
+
+   وضيف بالأعلى مع باقي الـ imports:
+   import TemplateManager from './pages/TemplateManager'
+
+   وضيف جوا <Routes> ... </Routes> سطر جديد:
+   <Route
+     path="/admin/template-manager"
+     element={
+       <ProtectedRoute>
+         <TemplateManager />
+       </ProtectedRoute>
+     }
+   />
+
+4) ضيف رابط بملف Sidebar.jsx يودي لـ /admin/template-manager
+   (ابعتلي شكل رابط GridExtractor الموجود عندك بالـ Sidebar وأنا بعطيك بالضبط نفس الصيغة).
+
+5) شغل المشروع:
+   npm run dev
+
+   وافتح:
+   http://localhost:5173/admin/template-manager
+   (أو البورت يلي شغال عندك)
+
+لو صار أي خطأ بالـ Console أو الصفحة، ابعت نص الخطأ كامل.

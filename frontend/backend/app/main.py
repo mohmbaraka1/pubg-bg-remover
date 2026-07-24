@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from . import config
-from .pipeline import pipeline, slice_grid
+from .pipeline import pipeline, slice_grid, slice_grid_by_color
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bg_remover.main")
@@ -43,7 +43,14 @@ def health_check():
 
 
 @app.post("/api/remove-background")
-async def remove_background(file: UploadFile = File(...)):
+async def remove_background(
+    file: UploadFile = File(...),
+    low_thresh: float | None = Form(None),
+    high_thresh: float | None = Form(None),
+    capture_padding_x: float | None = Form(None),
+    capture_padding_y: float | None = Form(None),
+    use_black_bg_refine: bool | None = Form(None),
+):
     if file.content_type not in config.ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=400,
@@ -60,12 +67,116 @@ async def remove_background(file: UploadFile = File(...)):
         )
 
     try:
-        result_png = pipeline.remove_background(raw)
+        result_png = pipeline.remove_background(
+            raw,
+            low_thresh=low_thresh,
+            high_thresh=high_thresh,
+            capture_padding_x=capture_padding_x,
+            capture_padding_y=capture_padding_y,
+            use_black_bg_refine=use_black_bg_refine,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Background removal failed")
         raise HTTPException(status_code=500, detail=f"فشل معالجة الصورة: {exc}") from exc
 
     return Response(content=result_png, media_type="image/png")
+
+
+@app.post("/api/upscale")
+async def upscale(file: UploadFile = File(...)):
+    """
+    يكبّر صورة PNG بخلفية شفافة (مثل نتيجة Grid Extractor) بالذكاء الاصطناعي
+    (FSRCNN، مقياس x4) للحصول على دقة أعلى (تقارب 4K حسب الحجم الأصلي).
+    """
+    raw = await file.read()
+    try:
+        result_png = pipeline.upscale_image(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Upscale failed")
+        raise HTTPException(status_code=500, detail=f"فشل التكبير: {exc}") from exc
+
+    return Response(content=result_png, media_type="image/png")
+
+
+@app.post("/api/remove-background/prepare")
+async def prepare_tuning(file: UploadFile = File(...)):
+    """
+    يشغّل المرحلة الثقيلة فقط (كشف + BiRefNet) مرة واحدة، ويرجّع session_id
+    يُستخدم بعدها مع /tune للتجربة السريعة لإعدادات مختلفة على نفس الصورة.
+    """
+    if file.content_type not in config.ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="نوع الملف غير مدعوم.")
+
+    raw = await file.read()
+    try:
+        session_id = pipeline.prepare_tuning_session(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Prepare tuning session failed")
+        raise HTTPException(status_code=500, detail=f"فشل التحضير: {exc}") from exc
+
+    return {"session_id": session_id}
+
+
+@app.post("/api/remove-background/tune")
+async def tune_background(
+    session_id: str = Form(...),
+    low_thresh: float = Form(0.28),
+    high_thresh: float = Form(0.60),
+    capture_padding_x: float = Form(0.40),
+    capture_padding_y: float = Form(0.15),
+):
+    """
+    تعديل سريع (ثوانٍ) على جلسة مُحضَّرة مسبقاً - لا يعيد تشغيل YOLO أو
+    BiRefNet، فقط يطبّق الإعدادات الجديدة على النتائج المخزَّنة.
+    """
+    try:
+        result_png = pipeline.tune_combine(
+            session_id,
+            low_thresh=low_thresh,
+            high_thresh=high_thresh,
+            pad_x_ratio=capture_padding_x,
+            pad_y_ratio=capture_padding_y,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Tune combine failed")
+        raise HTTPException(status_code=500, detail=f"فشل التعديل: {exc}") from exc
+
+    return Response(content=result_png, media_type="image/png")
+
+
+@app.post("/api/remove-background-multi")
+async def remove_background_multi(file: UploadFile = File(...)):
+    """
+    يستقبل صورة فيها عدة شخصيات (مثل صور اصطفاف الحسابات)، ويكتشف كل واحدة
+    فيها، ويرجّع كل شخصية كصورة PNG مستقلة بخلفية شفافة (Base64).
+    """
+    if file.content_type not in config.ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"نوع الملف غير مدعوم: {file.content_type}. "
+            f"الأنواع المسموحة: {', '.join(config.ALLOWED_CONTENT_TYPES)}",
+        )
+
+    raw = await file.read()
+    size_mb = len(raw) / (1024 * 1024)
+    if size_mb > config.MAX_UPLOAD_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"حجم الملف كبير جداً ({size_mb:.1f}MB). الحد الأقصى {config.MAX_UPLOAD_MB}MB.",
+        )
+
+    try:
+        results = pipeline.remove_background_multi(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Multi-character background removal failed")
+        raise HTTPException(status_code=500, detail=f"فشل استخراج الشخصيات: {exc}") from exc
+
+    return {
+        "count": len(results),
+        "images": [base64.b64encode(r).decode("utf-8") for r in results],
+    }
 
 
 @app.post("/api/grid-slice")
@@ -76,15 +187,23 @@ async def grid_slice(
     rect_w: int = Form(...),
     rect_h: int = Form(...),
     saturation_threshold: float = Form(70.0),
+    method: str = Form("projection"),
 ):
     """
     يستقبل صورة سكرين شوت + منطقة تقريبية (rect) تحدد مكان الشبكة، ويكتشف
     تلقائياً حدود كل بطاقة/عنصر داخلها ويقصّها بدقة. لا يستخدم SAM2/BiRefNet
     (معالجة سريعة، ثوانٍ فقط، لأنها تحليل هندسي/لوني بسيط).
+
+    method="projection" (افتراضي): تحليل خطي بالتشبع (أدق للشبكات المنتظمة).
+    method="color": اكتشاف بألوان إطارات البطاقات + Contours (أدق أحياناً
+    للبطاقات ذات إطار ملوّن واضح، لكن قد تفوّته بطاقات بلا إطار ملوّن).
     """
     raw = await file.read()
     try:
-        cells = slice_grid(raw, rect_x, rect_y, rect_w, rect_h, saturation_threshold)
+        if method == "color":
+            cells = slice_grid_by_color(raw, rect_x, rect_y, rect_w, rect_h)
+        else:
+            cells = slice_grid(raw, rect_x, rect_y, rect_w, rect_h, saturation_threshold)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Grid slicing failed")
         raise HTTPException(status_code=500, detail=f"فشل تقطيع الشبكة: {exc}") from exc

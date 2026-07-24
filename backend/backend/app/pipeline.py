@@ -66,13 +66,6 @@ class BackgroundRemovalPipeline:
         self._sam2_predictor = None
         self._birefnet = None
         self._birefnet_transform = None
-        self._fsrcnn = None
-
-        # ذاكرة مؤقتة: تحفظ نتيجة المرحلة الثقيلة (كشف + BiRefNet) لكل صورة
-        # حتى نقدر نجرب إعدادات مختلفة (عتبات/هوامش) بسرعة (ثوانٍ) بدل
-        # إعادة تشغيل النماذج الثقيلة كاملة من الصفر بكل تجربة.
-        self._tuning_cache: dict[str, dict] = {}
-        self._last_embedded_session: str | None = None
 
     # ------------------------------------------------------------------ #
     # تحميل النماذج (Lazy load - أول طلب فقط)
@@ -134,47 +127,6 @@ class BackgroundRemovalPipeline:
             ]
         )
 
-    def _load_fsrcnn(self) -> None:
-        if self._fsrcnn is not None:
-            return
-        if not config.FSRCNN_MODEL_PATH.exists():
-            logger.info("Downloading FSRCNN super-resolution model (first run only)...")
-            config.FSRCNN_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-            urlretrieve(config.FSRCNN_MODEL_URL, config.FSRCNN_MODEL_PATH)
-
-        logger.info("Loading FSRCNN super-resolution model...")
-        sr = cv2.dnn_superres.DnnSuperResImpl_create()
-        sr.readModel(str(config.FSRCNN_MODEL_PATH))
-        sr.setModel("fsrcnn", config.FSRCNN_SCALE)
-        self._fsrcnn = sr
-
-    def upscale_image(self, image_bytes: bytes) -> bytes:
-        """
-        يكبّر صورة PNG (بخلفية شفافة) بالذكاء الاصطناعي (FSRCNN) بمقياس x4،
-        مع الحفاظ على الشفافية (القناة الرابعة alpha تُكبَّر بطريقة عادية
-        منفصلة، لأن نموذج FSRCNN يشتغل فقط على 3 قنوات ألوان RGB).
-        """
-        self._load_fsrcnn()
-
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-        rgba = np.array(image)
-        rgb = rgba[:, :, :3]
-        alpha = rgba[:, :, 3]
-
-        rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        upscaled_bgr = self._fsrcnn.upsample(rgb_bgr)
-        upscaled_rgb = cv2.cvtColor(upscaled_bgr, cv2.COLOR_BGR2RGB)
-
-        new_h, new_w = upscaled_rgb.shape[:2]
-        upscaled_alpha = cv2.resize(alpha, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-        result_rgba = np.dstack([upscaled_rgb, upscaled_alpha])
-        result_img = Image.fromarray(result_rgba, mode="RGBA")
-
-        out = io.BytesIO()
-        result_img.save(out, format="PNG")
-        return out.getvalue()
-
     # ------------------------------------------------------------------ #
     # خطوة 1: تحديد الشخصية الرئيسية
     # ------------------------------------------------------------------ #
@@ -227,8 +179,6 @@ class BackgroundRemovalPipeline:
         box: PersonBox,
         x_bound_min: int | None = None,
         x_bound_max: int | None = None,
-        pad_x_ratio: float | None = None,
-        pad_y_ratio: float | None = None,
     ) -> np.ndarray:
         # ملاحظة: نفترض أن self._sam2_predictor.set_image() استُدعي مسبقاً
         # من قِبل المستدعي (مرة واحدة فقط لكل صورة، لأنه العملية الأغلى) -
@@ -240,8 +190,8 @@ class BackgroundRemovalPipeline:
         # يمتد أفقياً) وهامش رأسي معقول لالتقاط الشعر المرتفع/القدم بالكامل.
         h, w = image_rgb.shape[:2]
         box_w, box_h = (box.x2 - box.x1), (box.y2 - box.y1)
-        pad_x = int(box_w * (pad_x_ratio if pad_x_ratio is not None else 0.40))
-        pad_y = int(box_h * (pad_y_ratio if pad_y_ratio is not None else 0.15))
+        pad_x = int(box_w * 0.40)
+        pad_y = int(box_h * 0.15)
         left = max(0, box.x1 - pad_x)
         right = min(w, box.x2 + pad_x)
         # لو انكشف حد جانبي (منتصف المسافة بينها وبين الجار)، لا نتعداه
@@ -305,10 +255,7 @@ class BackgroundRemovalPipeline:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _combine_masks(
-        sam2_mask: np.ndarray,
-        birefnet_alpha: np.ndarray,
-        low_thresh: float = 0.28,
-        high_thresh: float = 0.60,
+        sam2_mask: np.ndarray, birefnet_alpha: np.ndarray, low_thresh: float = 0.28
     ) -> np.ndarray:
         sam2_norm = sam2_mask.astype(np.float32) / 255.0
         biref_norm = birefnet_alpha.astype(np.float32) / 255.0
@@ -327,7 +274,7 @@ class BackgroundRemovalPipeline:
         # نطبّق منحنى تباين (contrast curve) على alpha: يدفع القيم الواطئة
         # جداً نحو الصفر تماماً، والقيم العالية جداً نحو 1، بينما يحافظ على
         # التدرّج الطبيعي لخصلات الشعر وحواف السلاح شبه الشفافة فعلياً.
-        low_thresh, high_thresh = low_thresh, high_thresh
+        low_thresh, high_thresh = low_thresh, 0.60
         combined = np.clip((combined - low_thresh) / (high_thresh - low_thresh), 0.0, 1.0)
 
         # إغلاق مورفولوجي خفيف يسدّ أي ثقوب صغيرة داخل الشخصية (مثلاً وسط
@@ -469,15 +416,7 @@ class BackgroundRemovalPipeline:
 
         return results
 
-    def prepare_tuning_session(self, image_bytes: bytes) -> str:
-        """
-        المرحلة الثقيلة فقط: كشف الشخصية + حساب embeddings الصورة لـ SAM2 +
-        حساب alpha الخاص بـ BiRefNet. تُخزَّن النتائج بذاكرة مؤقتة، وترجّع
-        معرّف جلسة (session_id) يُستخدم لاحقاً بدالة tune_combine للتعديل
-        السريع بدون إعادة تشغيل النماذج الثقيلة من جديد.
-        """
-        import uuid
-
+    def remove_background(self, image_bytes: bytes) -> bytes:
         self.load_all()
 
         image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -486,168 +425,13 @@ class BackgroundRemovalPipeline:
 
         box = self._detect_main_character(image_bgr)
         self._sam2_predictor.set_image(image_rgb)
+        sam2_mask = self._segment_with_sam2(image_rgb, box)
         birefnet_alpha = self._matte_with_birefnet(image_pil)
-
-        session_id = uuid.uuid4().hex
-        self._last_embedded_session = session_id
-        # نحتفظ بحد أقصى 5 جلسات بالذاكرة لتفادي تراكم استهلاك الرام
-        if len(self._tuning_cache) >= 5:
-            oldest_key = next(iter(self._tuning_cache))
-            del self._tuning_cache[oldest_key]
-
-        self._tuning_cache[session_id] = {
-            "image_rgb": image_rgb,
-            "box": box,
-            "birefnet_alpha": birefnet_alpha,
-        }
-        return session_id
-
-    def tune_combine(
-        self,
-        session_id: str,
-        low_thresh: float = 0.28,
-        high_thresh: float = 0.60,
-        pad_x_ratio: float = 0.40,
-        pad_y_ratio: float = 0.15,
-    ) -> bytes:
-        """
-        المرحلة الخفيفة: تعيد استخدام نتائج prepare_tuning_session المخزَّنة
-        (بدون إعادة تشغيل YOLO أو BiRefNet)، وتشغّل فقط SAM2.predict (رخيصة
-        طالما الصورة نفسها محفوظة بالذاكرة عبر set_image) + دمج الأقنعة
-        بالإعدادات الجديدة. سريعة جداً (ثوانٍ) مقارنة بالمرحلة الثقيلة.
-        """
-        cached = self._tuning_cache.get(session_id)
-        if not cached:
-            raise ValueError("جلسة التعديل غير موجودة أو انتهت صلاحيتها. ارفع الصورة من جديد.")
-
-        image_rgb = cached["image_rgb"]
-        box = cached["box"]
-        birefnet_alpha = cached["birefnet_alpha"]
-
-        # نتخطى إعادة الحساب الأبطأ (set_image) لو كانت نفس الجلسة محمّلة
-        # فعلياً بذاكرة SAM2 من طلب سابق - هذا هو مصدر السرعة الحقيقي هنا.
-        if self._last_embedded_session != session_id:
-            self._sam2_predictor.set_image(image_rgb)
-            self._last_embedded_session = session_id
-        sam2_mask = self._segment_with_sam2(
-            image_rgb, box, pad_x_ratio=pad_x_ratio, pad_y_ratio=pad_y_ratio
-        )
-        final_alpha = self._combine_masks(
-            sam2_mask, birefnet_alpha, low_thresh=low_thresh, high_thresh=high_thresh
-        )
+        # الوضع الفردي يستخدم العتبة الافتراضية الثابتة (0.28) دائماً - هذي
+        # القيمة "الممتازة" المؤكدة، ولن تتأثر بأي تعديل يصير على وضع
+        # الاستخراج الجماعي أو أي تجربة مستقبلية أخرى.
+        final_alpha = self._combine_masks(sam2_mask, birefnet_alpha)
         final_alpha = self._remove_disconnected_objects(final_alpha, box)
-
-        rgba = np.dstack([image_rgb, final_alpha])
-        result_img = Image.fromarray(rgba, mode="RGBA")
-
-        out = io.BytesIO()
-        result_img.save(out, format="PNG")
-        return out.getvalue()
-
-    def _estimate_glossy_ratio(self, image_bgr: np.ndarray, box: PersonBox) -> float:
-        """
-        يقيس نسبة البكسلات "اللامعة/الفاتحة جداً" (تشبع لوني منخفض + سطوع
-        عالٍ) داخل صندوق الكشف - مؤشر شائع للمواد الشفافة/الجليدية/الزجاجية
-        (زي أسلحة Glacier) اللي يصعب على النموذج تمييزها عن الخلفية.
-        """
-        h, w = image_bgr.shape[:2]
-        x1, y1 = max(0, box.x1), max(0, box.y1)
-        x2, y2 = min(w, box.x2), min(h, box.y2)
-        region = image_bgr[y1:y2, x1:x2]
-        if region.size == 0:
-            return 0.0
-        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-        saturation = hsv[:, :, 1]
-        value = hsv[:, :, 2]
-        glossy_mask = (saturation < 60) & (value > 150)
-        return float(glossy_mask.mean())
-
-    def remove_background(
-        self,
-        image_bytes: bytes,
-        low_thresh: float | None = None,
-        high_thresh: float | None = None,
-        capture_padding_x: float | None = None,
-        capture_padding_y: float | None = None,
-        use_black_bg_refine: bool | None = None,
-    ) -> bytes:
-        """
-        low_thresh/high_thresh/capture_padding_*: لو انمررت (مو None)، تُستخدم
-        كما هي بالضبط ويُعطَّل فحص الجودة التلقائي - يفيد للتجربة اليدوية من
-        الواجهة (تعديل مباشر لإيجاد أفضل قيمة لصورة صعبة معيّنة). لو انتُركت
-        فاضية (None)، يشتغل النظام بإعداداته الافتراضية المعتادة + فحص الجودة.
-        """
-        manual_override = low_thresh is not None or high_thresh is not None
-        self.load_all()
-
-        image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image_rgb = np.array(image_pil)
-        image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
-
-        box = self._detect_main_character(image_bgr)
-        self._sam2_predictor.set_image(image_rgb)
-        sam2_mask = self._segment_with_sam2(
-            image_rgb, box, pad_x_ratio=capture_padding_x, pad_y_ratio=capture_padding_y
-        )
-
-        # === تسويد الخلفية التقريبية (Coarse-to-Fine) ===
-        # نستخدم قناع SAM2 (تقريبي) لنسوّد كل ما هو خارجه *قبل* ما نمرر
-        # الصورة لـ BiRefNet. هذا يعطي BiRefNet خلفية سودا موحّدة بدل مشهد
-        # اللعبة المعقد، فيسهل عليه تمييز حواف العناصر الفاتحة/اللامعة
-        # (زي الأسلحة الجليدية) بدقة أعلى عند مرحلة الدمج النهائي.
-        should_blacken = use_black_bg_refine
-        if should_blacken is None and not manual_override:
-            should_blacken = self._estimate_glossy_ratio(image_bgr, box) > 0.18
-
-        if should_blacken:
-            dilate_kernel = np.ones((25, 25), np.uint8)
-            dilated_mask = cv2.dilate((sam2_mask > 25).astype(np.uint8) * 255, dilate_kernel)
-            keep = dilated_mask > 0
-            blackened_rgb = image_rgb.copy()
-            blackened_rgb[~keep] = 0
-            birefnet_input = Image.fromarray(blackened_rgb)
-        else:
-            birefnet_input = image_pil
-
-        birefnet_alpha = self._matte_with_birefnet(birefnet_input)
-
-        combine_kwargs = {}
-        if low_thresh is not None:
-            combine_kwargs["low_thresh"] = low_thresh
-        if high_thresh is not None:
-            combine_kwargs["high_thresh"] = high_thresh
-
-        # === كشف استباقي: لو العنصر يحتوي نسبة كبيرة من مناطق لامعة/فاتحة
-        # (مؤشر مواد شفافة/جليدية شائعة بأسلحة PUBG)، نبدأ مباشرة بعتبة أكثر
-        # تساهلاً بدل انتظار فحص الجودة بعد المعالجة (أسرع وأدق من البداية)
-        if not manual_override:
-            glossy_ratio = self._estimate_glossy_ratio(image_bgr, box)
-            if glossy_ratio > 0.18:
-                logger.info(
-                    "كُشفت نسبة عالية من المواد اللامعة/الشفافة (%.2f) - استخدام عتبة أكثر تساهلاً من البداية",
-                    glossy_ratio,
-                )
-                combine_kwargs.setdefault("low_thresh", 0.18)
-
-        final_alpha = self._combine_masks(sam2_mask, birefnet_alpha, **combine_kwargs)
-        final_alpha = self._remove_disconnected_objects(final_alpha, box)
-
-        if not manual_override:
-            # === فحص جودة تلقائي (فقط بالوضع الافتراضي، مو بالتجربة اليدوية) ===
-            box_area = max(1, (box.x2 - box.x1) * (box.y2 - box.y1))
-            mask_area = int((final_alpha > 25).sum())
-            quality_ratio = mask_area / box_area
-
-            if quality_ratio < 0.35:
-                logger.warning(
-                    "جودة القناع منخفضة (نسبة %.2f) - إعادة المعالجة بعتبة أكثر تساهلاً",
-                    quality_ratio,
-                )
-                lenient_alpha = self._combine_masks(sam2_mask, birefnet_alpha, low_thresh=0.12)
-                lenient_alpha = self._remove_disconnected_objects(lenient_alpha, box)
-                lenient_mask_area = int((lenient_alpha > 25).sum())
-                if lenient_mask_area > mask_area * 1.15:
-                    final_alpha = lenient_alpha
 
         rgba = np.dstack([image_rgb, final_alpha])
         result_img = Image.fromarray(rgba, mode="RGBA")
@@ -732,74 +516,5 @@ def slice_grid(
             buf = io.BytesIO()
             cell_img.save(buf, format="PNG")
             cells.append({"row": ri, "col": ci, "png_bytes": buf.getvalue()})
-
-    return cells
-
-
-def slice_grid_by_color(
-    image_bytes: bytes,
-    rect_x: int,
-    rect_y: int,
-    rect_w: int,
-    rect_h: int,
-) -> list[dict]:
-    """
-    طريقة اكتشاف بديلة: تحدد حدود كل بطاقة عبر البحث عن ألوان إطارات
-    البطاقات الشائعة (وردي/بنفسجي/أحمر/ذهبي) + تحليل Contours، بدل التحليل
-    الخطي بالتشبع. أدق لبطاقات ذات إطارات ملوّنة واضحة، لكن يجب أن تُطبَّق
-    داخل منطقة محددة يدوياً (وليس على الصورة كاملة) لتفادي التباس ألوان
-    ملابس الشخصيات بألوان إطارات البطاقات.
-    """
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    full = np.array(image)
-    full_bgr = cv2.cvtColor(full, cv2.COLOR_RGB2BGR)
-
-    h, w = full_bgr.shape[:2]
-    x1 = max(0, rect_x)
-    y1 = max(0, rect_y)
-    x2 = min(w, rect_x + rect_w)
-    y2 = min(h, rect_y + rect_h)
-    region = full_bgr[y1:y2, x1:x2]
-    rh, rw = region.shape[:2]
-
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-
-    # نطاقات ألوان إطارات البطاقات الشائعة بألعاب الموبايل (Battle Royale)
-    color_ranges = [
-        ((140, 40, 60), (170, 255, 255)),  # وردي
-        ((120, 40, 60), (150, 255, 255)),  # بنفسجي
-        ((0, 60, 60), (10, 255, 255)),     # أحمر
-        ((170, 60, 60), (180, 255, 255)),  # أحمر (الطرف الثاني بعجلة الألوان)
-        ((15, 60, 100), (35, 255, 255)),   # ذهبي
-    ]
-    combined_mask = np.zeros((rh, rw), dtype=np.uint8)
-    for lo, hi in color_ranges:
-        mask = cv2.inRange(hsv, np.array(lo), np.array(hi))
-        combined_mask = cv2.bitwise_or(combined_mask, mask)
-
-    kernel = np.ones((5, 5), np.uint8)
-    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
-
-    contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    boxes = []
-    min_area = max(500, (rw * rh) // 500)  # يتكيف مع حجم المنطقة المحددة
-    for cnt in contours:
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        area = cw * ch
-        if area > min_area and 0.5 < (cw / ch) < 2.0:
-            boxes.append((x, y, cw, ch))
-
-    # ترتيب البطاقات: من أعلى لأسفل، ثم من اليسار لليمين (لتقريب ترتيب صف/عمود)
-    boxes.sort(key=lambda b: (round(b[1] / 40), b[0]))
-
-    cells = []
-    for i, (x, y, cw, ch) in enumerate(boxes):
-        cell_bgr = region[y : y + ch, x : x + cw]
-        cell_rgb = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2RGB)
-        cell_img = Image.fromarray(cell_rgb)
-        buf = io.BytesIO()
-        cell_img.save(buf, format="PNG")
-        cells.append({"row": i // 20, "col": i % 20, "png_bytes": buf.getvalue()})
 
     return cells

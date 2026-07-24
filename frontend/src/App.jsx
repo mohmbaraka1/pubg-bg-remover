@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+﻿import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -6,6 +6,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import VerifyEmail from "./pages/VerifyEmail";
 import ProtectedRoute from "./components/ProtectedRoute";
 import BackgroundRemover from "./components/BackgroundRemover";
+import MultiCharacterExtractor from "./pages/dashboard/MultiCharacterExtractor";
 import DashboardLayout from "./components/DashboardLayout";
 import DashboardHome from "./pages/dashboard/DashboardHome";
 import MyAccounts from "./pages/dashboard/MyAccounts";
@@ -13,6 +14,8 @@ import AccountWorkspace from "./pages/dashboard/AccountWorkspace";
 import DesignResources from "./pages/dashboard/DesignResources";
 import GameLibrary from "./pages/dashboard/GameLibrary";
 import GridExtractor from "./pages/dashboard/GridExtractor";
+import TemplateEditor from "./pages/dashboard/TemplateEditor";
+import ImageEditor from "./pages/dashboard/ImageEditor";
 import AIAssets from "./pages/dashboard/AIAssets";
 import DesignStudio from "./pages/dashboard/DesignStudio";
 import History from "./pages/dashboard/History";
@@ -30,6 +33,7 @@ export default function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
 
+        {/* أداة إزالة الخلفية الحالية - بدون تغيير */}
         <Route
           path="/app"
           element={
@@ -39,6 +43,17 @@ export default function App() {
           }
         />
 
+        {/* استخراج عدة شخصيات من صورة واحدة */}
+        <Route
+          path="/app-multi"
+          element={
+            <ProtectedRoute>
+              <MultiCharacterExtractor />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* الهيكلة الاحترافية (المرحلة الثالثة) */}
         <Route
           path="/dashboard"
           element={
@@ -53,6 +68,8 @@ export default function App() {
           <Route path="resources" element={<DesignResources />} />
           <Route path="game-library" element={<GameLibrary />} />
           <Route path="grid-extractor" element={<GridExtractor />} />
+          <Route path="template-editor" element={<TemplateEditor />} />
+          <Route path="image-editor" element={<ImageEditor />} />
           <Route path="ai-assets" element={<AIAssets />} />
           <Route path="studio" element={<DesignStudio />} />
           <Route path="history" element={<History />} />
