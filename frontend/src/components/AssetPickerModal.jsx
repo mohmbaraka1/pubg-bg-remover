@@ -154,7 +154,10 @@ function ReadyLibraryTab({ onSelect, onClose }) {
 
   useEffect(() => {
     setLoading(true);
-    let query = supabase.from("game_items").select("*").eq("category", activeCategory);
+    let query = supabase
+      .from("game_items")
+      .select("*, asset_types(group_label, name)")
+      .eq("category", activeCategory);
     if (search.trim()) query = query.ilike("name", `%${search.trim()}%`);
     query.order("name", { ascending: true }).then(({ data }) => {
       setItems(data || []);
@@ -180,20 +183,35 @@ function ReadyLibraryTab({ onSelect, onClose }) {
         ) : items.length === 0 ? (
           <p className="text-neutral-500 text-sm text-center py-10">لا توجد نتائج.</p>
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  onSelect(item.file_url, item.category);
-                  onClose();
-                }}
-                className="flex flex-col aspect-square bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden active:border-amber-500 transition-colors transparency-grid"
-              >
-                <img src={item.file_url} alt={item.name} className="w-full h-full object-contain" />
-              </button>
-            ))}
-          </div>
+          Object.entries(
+            items.reduce((groups, item) => {
+              const key = item.asset_types?.group_label || item.asset_types?.name || "أخرى";
+              if (!groups[key]) groups[key] = [];
+              groups[key].push(item);
+              return groups;
+            }, {})
+          ).map(([groupName, groupItems]) => (
+            <div key={groupName} className="mb-6">
+              <h3 className="text-neutral-400 text-xs font-semibold mb-2 flex items-center gap-1.5">
+                <span className="w-1 h-1 bg-amber-500 rounded-full" />
+                {groupName}
+              </h3>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                {groupItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelect(item.file_url, item.category);
+                      onClose();
+                    }}
+                    className="flex flex-col aspect-square bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden active:border-amber-500 transition-colors transparency-grid"
+                  >
+                    <img src={item.file_url} alt={item.name} className="w-full h-full object-contain" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </>
