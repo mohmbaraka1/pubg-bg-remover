@@ -394,6 +394,146 @@ class BackgroundRemovalPipeline:
         keep_mask = (labels == main_label).astype(np.uint8)
         cleaned_alpha = alpha * keep_mask
         return cleaned_alpha
+    def _detect_grid_cell_boxes(self, region_bgr: np.ndarray) -> list[tuple]:
+        """يرجّع صناديق (x, y, w, h) نسبية للمنطقة المعطاة - نفس خوارزمية
+        كشف البطاقات بالألوان المستخدمة بأداة Grid Extractor، مع إزالة
+        التداخل، ورجوع تلقائي لشبكة منتظمة لو الكشف باللون غير موثوق."""
+        rh, rw = region_bgr.shape[:2]
+        if rh < 5 or rw < 5:
+            return []
+        hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
+        color_ranges = [
+            ((140, 40, 60), (170, 255, 255)),
+            ((120, 40, 60), (150, 255, 255)),
+            ((0, 60, 60), (10, 255, 255)),
+            ((170, 60, 60), (180, 255, 255)),
+            ((15, 60, 100), (35, 255, 255)),
+        ]
+        combined_mask = np.zeros((rh, rw), dtype=np.uint8)
+        for lo, hi in color_ranges:
+            combined_mask = cv2.bitwise_or(combined_mask, cv2.inRange(hsv, np.array(lo), np.array(hi)))
+        kernel = np.ones((5, 5), np.uint8)
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        raw_boxes = []
+        min_area = max(300, (rw * rh) // 600)
+        for cnt in contours:
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            if cw * ch > min_area and 0.5 < (cw / ch) < 2.0:
+                raw_boxes.append((x, y, cw, ch))
+
+        # === رفض الصناديق العملاقة غير الطبيعية (اندماج خاطئ بين عنصرين
+        # متجاورين بسبب تشابه لوني بالفراغ بينهم) - أي صندوق أكبر من 2.5
+        # ضعف المتوسط يُعتبر خطأ اندماج ويُرفض بدل ما يُحتسب كعنصر واحد ضخم
+        if len(raw_boxes) >= 3:
+            areas = [bw * bh for (_, _, bw, bh) in raw_boxes]
+            median_area = float(np.median(areas))
+            if median_area > 0:
+                raw_boxes = [b for b in raw_boxes if (b[2] * b[3]) < median_area * 2.5]
+
+        # === إزالة التداخل (NMS بسيط): لو صندوقين متداخلين بنسبة كبيرة،
+        # نحتفظ بالأكبر بس ونرمي الثاني (كان يسبب عناصر متكدّسة فوق بعض)
+        def iou(a, b):
+            ax1, ay1, aw, ah = a
+            bx1, by1, bw, bh = b
+            ax2, ay2, bx2, by2 = ax1 + aw, ay1 + ah, bx1 + bw, by1 + bh
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+            inter = iw * ih
+            union = aw * ah + bw * bh - inter
+            return inter / union if union > 0 else 0
+
+        raw_boxes.sort(key=lambda b: -(b[2] * b[3]))  # الأكبر أولاً
+        deduped = []
+        for b in raw_boxes:
+            if all(iou(b, kept) < 0.3 for kept in deduped):
+                deduped.append(b)
+
+        # === رجوع تلقائي لشبكة منتظمة لو الكشف ضعيف جداً (أقل من 4 خلايا
+        # موثوقة) - نستخدم متوسط حجم الخلايا اللي انكشفت (لو وُجدت) لتخمين
+        # حجم الخلية القياسي، وإلا نقسّم المنطقة كاملة لخلايا مربّعة تقريبية
+        if len(deduped) < 4:
+            if deduped:
+                avg_w = int(np.median([b[2] for b in deduped]))
+                avg_h = int(np.median([b[3] for b in deduped]))
+            else:
+                avg_w = avg_h = max(40, min(rw, rh) // 8)
+            avg_w = max(20, avg_w)
+            avg_h = max(20, avg_h)
+            cols = max(1, rw // avg_w)
+            rows = max(1, rh // avg_h)
+            deduped = []
+            for r in range(rows):
+                for c in range(cols):
+                    deduped.append((c * (rw // cols), r * (rh // rows), rw // cols, rh // rows))
+
+        deduped.sort(key=lambda b: (round(b[1] / 40), b[0]))
+        return deduped
+
+    def detect_full_template_layout(self, image_bytes: bytes) -> dict:
+        """
+        يكتشف تلقائياً بضغطة وحدة: مواضع كل الشخصيات (YOLO) + شبكات
+        الأسلحة/السيارات فوق وتحت صف الشخصيات (تحليل ألوان البطاقات) -
+        لبناء تيمبلت شامل مطابق للصورة المرجعية بأقل تدخل يدوي.
+        """
+        self.load_all()
+        image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image_rgb = np.array(image_pil)
+        image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        h, w = image_bgr.shape[:2]
+
+        char_boxes = self._detect_all_characters(image_bgr)
+        characters = [
+            {"x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2} for b in char_boxes
+        ]
+
+        if char_boxes:
+            char_top = int(np.percentile([b.y1 for b in char_boxes], 10))
+            char_bottom = max(b.y2 for b in char_boxes)
+        else:
+            char_top, char_bottom = h, h  # ما فيه شخصيات - نعتبر كل الصورة "فوق"
+
+        top_region = image_bgr[0:char_top, :]
+        top_boxes = self._detect_grid_cell_boxes(top_region)
+        top_cells = [{"x": x, "y": y, "w": cw, "h": ch} for (x, y, cw, ch) in top_boxes]
+
+        bottom_region = image_bgr[char_bottom:h, :]
+        bottom_boxes = self._detect_grid_cell_boxes(bottom_region)
+        bottom_cells = [
+            {"x": x, "y": y + char_bottom, "w": cw, "h": ch} for (x, y, cw, ch) in bottom_boxes
+        ]
+
+        return {
+            "image_width": w,
+            "image_height": h,
+            "characters": characters,
+            "top_cells": top_cells,
+            "bottom_cells": bottom_cells,
+        }
+
+    def detect_people_boxes(self, image_bytes: bytes) -> dict:
+        """
+        يكتشف صناديق كل الأشخاص بالصورة بالذكاء الاصطناعي (YOLO) فقط - بدون
+        قص أو إزالة خلفية (سريعة جداً، ثوانٍ). يُستخدم لبناء تيمبلتات مطابقة
+        تلقائياً لمواضع الشخصيات الحقيقية بصورة مرجعية.
+        """
+        self.load_all()
+        image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image_rgb = np.array(image_pil)
+        image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        h, w = image_bgr.shape[:2]
+
+        boxes = self._detect_all_characters(image_bgr)
+        return {
+            "image_width": w,
+            "image_height": h,
+            "boxes": [
+                {"x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2, "confidence": b.confidence}
+                for b in boxes
+            ],
+        }
+
     def _detect_all_characters(self, image_bgr: np.ndarray) -> list[PersonBox]:
         """
         يرجّع كل الأشخاص المكتشفين بالصورة (مرتبين من اليسار لليمين، بنفس
@@ -417,6 +557,12 @@ class BackgroundRemovalPipeline:
         for box in boxes:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             conf = float(box.conf[0])
+            bw, bh = x2 - x1, y2 - y1
+            # فلتر منطقي: الشخص الواقف دايماً أطول من عرضه بوضوح (نسبة
+            # ارتفاع/عرض > 1.3 تقريباً). أي صندوق شبه مربّع أو أعرض من طوله
+            # غالباً كشف خاطئ (شعار، أيقونة، رمز بمنتصف الصورة) - نرفضه.
+            if bh <= 0 or bw <= 0 or (bh / bw) < 1.3:
+                continue
             detected.append(PersonBox(int(x1), int(y1), int(x2), int(y2), conf))
 
         detected.sort(key=lambda b: b.x1)  # من اليسار لليمين

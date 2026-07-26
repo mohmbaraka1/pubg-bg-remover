@@ -82,6 +82,36 @@ async def remove_background(
     return Response(content=result_png, media_type="image/png")
 
 
+@app.post("/api/detect-full-layout")
+async def detect_full_layout(file: UploadFile = File(...)):
+    """
+    يكتشف كل شي بصورة مرجعية بضغطة وحدة: مواضع الشخصيات + شبكات
+    الأسلحة/السيارات فوق وتحت - لبناء تيمبلت شامل تلقائياً.
+    """
+    raw = await file.read()
+    try:
+        result = pipeline.detect_full_template_layout(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Detect full layout failed")
+        raise HTTPException(status_code=500, detail=f"فشل الكشف: {exc}") from exc
+    return result
+
+
+@app.post("/api/detect-people")
+async def detect_people(file: UploadFile = File(...)):
+    """
+    يكتشف صناديق كل الأشخاص بصورة مرجعية بالذكاء الاصطناعي (سريعة، بدون قص)
+    - يُستخدم لبناء تيمبلت مطابق تلقائياً لمواضع الشخصيات الحقيقية.
+    """
+    raw = await file.read()
+    try:
+        result = pipeline.detect_people_boxes(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Detect people failed")
+        raise HTTPException(status_code=500, detail=f"فشل الكشف: {exc}") from exc
+    return result
+
+
 @app.post("/api/upscale")
 async def upscale(file: UploadFile = File(...)):
     """

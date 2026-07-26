@@ -1,4 +1,4 @@
-﻿import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -15,7 +15,9 @@ import DesignResources from "./pages/dashboard/DesignResources";
 import GameLibrary from "./pages/dashboard/GameLibrary";
 import GridExtractor from "./pages/dashboard/GridExtractor";
 import TemplateEditor from "./pages/dashboard/TemplateEditor";
+import TemplateLibrary from "./pages/dashboard/TemplateLibrary";
 import ImageEditor from "./pages/dashboard/ImageEditor";
+import Upgrade from "./pages/dashboard/Upgrade";
 import AIAssets from "./pages/dashboard/AIAssets";
 import DesignStudio from "./pages/dashboard/DesignStudio";
 import History from "./pages/dashboard/History";
@@ -69,7 +71,9 @@ export default function App() {
           <Route path="game-library" element={<GameLibrary />} />
           <Route path="grid-extractor" element={<GridExtractor />} />
           <Route path="template-editor" element={<TemplateEditor />} />
+          <Route path="template-library" element={<TemplateLibrary />} />
           <Route path="image-editor" element={<ImageEditor />} />
+          <Route path="upgrade" element={<Upgrade />} />
           <Route path="ai-assets" element={<AIAssets />} />
           <Route path="studio" element={<DesignStudio />} />
           <Route path="history" element={<History />} />

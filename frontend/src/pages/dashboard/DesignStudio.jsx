@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Stage, Layer, Image as KonvaImage, Rect, Text, Line, Transformer } from "react-konva";
 import Konva from "konva";
 import useImage from "use-image";
@@ -110,20 +111,45 @@ function EmptySlot({ slot, onClick }) {
         y={slot.y}
         width={slot.width}
         height={slot.height}
-        stroke="#a3a3a3"
-        dash={[10, 6]}
-        cornerRadius={8}
+        fill="rgba(245, 158, 11, 0.06)"
+        stroke="rgba(245, 158, 11, 0.35)"
+        strokeWidth={1.5}
+        cornerRadius={14}
         onClick={onClick}
         onTap={onClick}
       />
+      <Rect
+        x={slot.x + slot.width / 2 - 22}
+        y={slot.y + slot.height / 2 - 22}
+        width={44}
+        height={44}
+        fill="rgba(245, 158, 11, 0.15)"
+        cornerRadius={22}
+        onClick={onClick}
+        onTap={onClick}
+        listening
+      />
+      <Text
+        x={slot.x + slot.width / 2 - 22}
+        y={slot.y + slot.height / 2 - 15}
+        width={44}
+        align="center"
+        text="+"
+        fontSize={26}
+        fontStyle="bold"
+        fill="#f59e0b"
+        onClick={onClick}
+        onTap={onClick}
+        listening
+      />
       <Text
         x={slot.x}
-        y={slot.y + slot.height / 2 - 20}
+        y={slot.y + slot.height / 2 + 26}
         width={slot.width}
         align="center"
-        text={`+\n${labelText}`}
-        fontSize={16}
-        fill="#d4d4d4"
+        text={labelText}
+        fontSize={13}
+        fill="#a3a3a3"
         onClick={onClick}
         onTap={onClick}
         listening
@@ -284,6 +310,8 @@ function TextLayer({ shapeProps, isSelected, onSelect, onChange, onDblClick, onD
 }
 
 export default function DesignStudio() {
+  const [searchParams] = useSearchParams();
+  const templateIdFromUrl = searchParams.get("templateId");
   const [templates, setTemplates] = useState([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [activeTemplate, setActiveTemplate] = useState(null);
@@ -297,10 +325,13 @@ export default function DesignStudio() {
   const [replaceTargetId, setReplaceTargetId] = useState(null);
   const [freeAddMode, setFreeAddMode] = useState(false);
   const [smartFillOpen, setSmartFillOpen] = useState(false);
+  const [smartFillMode, setSmartFillMode] = useState("fill"); // "fill" | "ai"
   const [bgBlur, setBgBlur] = useState(0);
   const [guideLines, setGuideLines] = useState([]);
+  const [rulers, setRulers] = useState([]); // مساطر ثابتة يضيفها المستخدم يدوياً للموازنة
   const stageRef = useRef();
   const containerRef = useRef();
+  const overlayLayerRef = useRef();
   const logoInputRef = useRef();
 
   useEffect(() => {
@@ -310,9 +341,15 @@ export default function DesignStudio() {
       .eq("is_active", true)
       .order("created_at", { ascending: false })
       .then(({ data }) => {
-        setTemplates(data || []);
+        const list = data || [];
+        setTemplates(list);
         setLoadingTemplates(false);
+        if (templateIdFromUrl) {
+          const match = list.find((t) => t.id === templateIdFromUrl);
+          if (match) applyTemplate(match);
+        }
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -353,8 +390,8 @@ export default function DesignStudio() {
         slotY: p.y,
         slotWidth: p.width,
         slotHeight: p.height,
-        rotation: 0,
-        fitted: false,
+        rotation: p.rotation || 0,
+        fitted: true, // نثق بالحجم/الموضع المحفوظ بالضبط - ما نعيد حسابه
         isBackground: p.type === "background",
       };
     });
@@ -386,6 +423,9 @@ export default function DesignStudio() {
     ]);
     setSlots((prev) => prev.filter((s) => s.id !== slot.id));
     setSelectedId(id);
+    if (slot.type === "character") {
+      unifyCharacterHeights();
+    }
   };
 
   const fillTextSlot = (slot) => {
@@ -455,25 +495,36 @@ export default function DesignStudio() {
     );
   };
 
-  // يوحّد ارتفاع كل الشخصيات دفعة وحدة (يستخدم الارتفاع القياسي 700 المتبع
-  // بكل التيمبلتات)، ويحافظ على وقوفها بنفس خط الأرض (الحافة السفلية ثابتة)
-  const STANDARD_CHARACTER_HEIGHT = 700;
+  // يوحّد ارتفاع كل الشخصيات دفعة وحدة، ويحافظ على وقوفها بنفس خط الأرض
   const unifyCharacterHeights = () => {
-    setLayers((prev) =>
-      prev.map((l) => {
+    setLayers((prev) => {
+      const characterLayers = prev.filter((l) => l.slotType === "character");
+      if (characterLayers.length === 0) return prev;
+
+      // نحدد الارتفاع المرجعي من التصميم الحالي نفسه (أكثر ارتفاع متكرر بين
+      // الشخصيات الموجودة) بدل رقم ثابت قد لا يناسب كل تيمبلت (بعض
+      // التيمبلتات المستوردة من صور مرجعية أماكنها أصغر من 700 مثلاً)
+      const heights = characterLayers.map((l) => Math.round(l.slotHeight ?? l.height));
+      const counts = {};
+      heights.forEach((h) => (counts[h] = (counts[h] || 0) + 1));
+      const targetHeight = Number(
+        Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]
+      );
+
+      return prev.map((l) => {
         if (l.slotType !== "character") return l;
         const currentBottom = (l.slotY ?? l.y) + (l.slotHeight ?? l.height);
-        const newSlotY = currentBottom - STANDARD_CHARACTER_HEIGHT;
+        const newSlotY = currentBottom - targetHeight;
         return {
           ...l,
           fitted: false,
-          slotHeight: STANDARD_CHARACTER_HEIGHT,
+          slotHeight: targetHeight,
           slotY: newSlotY,
           y: newSlotY,
-          height: STANDARD_CHARACTER_HEIGHT,
+          height: targetHeight,
         };
-      })
-    );
+      });
+    });
   };
 
   const CATEGORY_TO_SLOT_TYPE = {
@@ -485,46 +536,184 @@ export default function DesignStudio() {
     frames: "frame",
   };
 
-  const handleSmartFillConfirm = (selectedItems) => {
+  // "تصميم بالذكاء الاصطناعي": يختار المستخدم عناصر بأعداد حرة (شخصيات،
+  // أسلحة، سيارات...)، والنظام يولّد ترتيب كامل تلقائياً بصيغة صف أيقونات
+  // فوق + صف شخصيات بالنص (نفس أسلوب بطاقات العرض الاحترافية) ويعبّيه
+  // مباشرة - بدون المرور بخطوة "اختر تيمبلت" منفصلة.
+  const CANVAS_W = 1600;
+  const CANVAS_H = 900;
+
+  const [pendingAIItems, setPendingAIItems] = useState(null);
+  const [layoutChooserOpen, setLayoutChooserOpen] = useState(false);
+
+  const handleAIDesignConfirm = (selectedItems) => {
     setSmartFillOpen(false);
-    setSlots((prevSlots) => {
-      let remainingSlots = [...prevSlots];
-      const newLayers = [];
-      selectedItems.forEach((item, i) => {
-        const targetType = CATEGORY_TO_SLOT_TYPE[item.category] || item.category;
-        const idx = remainingSlots.findIndex((s) => s.type === targetType);
-        if (idx === -1) return; // ما في مكان فاضي مناسب لهالنوع، نتجاهله
-        const slot = remainingSlots[idx];
-        remainingSlots = remainingSlots.filter((_, si) => si !== idx);
-        const fitMode = targetType === "character" ? "height" : "contain";
-        newLayers.push({
-          id: `layer_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
-          slotId: slot.id,
-          slotType: slot.type,
+    setPendingAIItems(selectedItems);
+    setLayoutChooserOpen(true);
+  };
+
+  // يبني التصميم فعلياً بالنمط اللي اختاره المستخدم من بين عدة خيارات تنسيق
+  const generateLayoutFromStyle = (style) => {
+    const selectedItems = pendingAIItems;
+    if (!selectedItems) return;
+    setLayoutChooserOpen(false);
+    setPendingAIItems(null);
+
+    const characters = selectedItems.filter((i) => i.category === "characters");
+    const icons = selectedItems.filter((i) => i.category !== "characters");
+    const generatedLayers = [];
+
+    if (style === "split") {
+      // نمط "موزّع": نص الأيقونات يسار فوق، ونص يمين فوق (زي بطاقات
+      // العرض اللي فيها صف سيارات يمين وصف أسلحة يسار)
+      const half = Math.ceil(icons.length / 2);
+      const leftIcons = icons.slice(0, half);
+      const rightIcons = icons.slice(half);
+      const iconSize = 110;
+      const gap = 6;
+
+      leftIcons.forEach((item, i) => {
+        const x = 20 + i * (iconSize + gap);
+        generatedLayers.push({
+          id: `ai_icon_l_${i}_${Date.now()}`,
+          slotType: item.category === "vehicles" ? "vehicle" : "weapon",
           src: item.src,
-          fitMode,
-          x: slot.x,
-          y: slot.y,
-          width: slot.width,
-          height: slot.height,
-          slotX: slot.x,
-          slotY: slot.y,
-          slotWidth: slot.width,
-          slotHeight: slot.height,
-          rotation: 0,
-          fitted: false,
-          isBackground: false,
+          fitMode: "contain",
+          x, y: 20, width: iconSize, height: iconSize,
+          slotX: x, slotY: 20, slotWidth: iconSize, slotHeight: iconSize,
+          rotation: 0, fitted: false,
         });
       });
-      if (newLayers.length > 0) {
-        setLayers((prevLayers) => [...prevLayers, ...newLayers]);
+      rightIcons.forEach((item, i) => {
+        const x = CANVAS_W - 20 - (i + 1) * (iconSize + gap) + gap;
+        generatedLayers.push({
+          id: `ai_icon_r_${i}_${Date.now()}`,
+          slotType: item.category === "vehicles" ? "vehicle" : "weapon",
+          src: item.src,
+          fitMode: "contain",
+          x, y: 20, width: iconSize, height: iconSize,
+          slotX: x, slotY: 20, slotWidth: iconSize, slotHeight: iconSize,
+          rotation: 0, fitted: false,
+        });
+      });
+    } else if (style === "compact") {
+      // نمط "مضغوط": الأيقونات كلها بزاوية علوية يسار، بصفين صغار (يخلي
+      // مساحة أكبر للشخصيات)
+      const perRow = Math.ceil(icons.length / 2) || 1;
+      const iconSize = 90;
+      const gap = 5;
+      icons.forEach((item, i) => {
+        const row = Math.floor(i / perRow);
+        const col = i % perRow;
+        const x = 20 + col * (iconSize + gap);
+        const y = 20 + row * (iconSize + gap);
+        generatedLayers.push({
+          id: `ai_icon_c_${i}_${Date.now()}`,
+          slotType: item.category === "vehicles" ? "vehicle" : "weapon",
+          src: item.src,
+          fitMode: "contain",
+          x, y, width: iconSize, height: iconSize,
+          slotX: x, slotY: y, slotWidth: iconSize, slotHeight: iconSize,
+          rotation: 0, fitted: false,
+        });
+      });
+    } else {
+      // نمط "كلاسيكي" (افتراضي): صف واحد ممتد فوق البطاقة كاملة
+      if (icons.length > 0) {
+        const margin = 20;
+        const gap = 8;
+        const usableWidth = CANVAS_W - margin * 2;
+        const iconSize = Math.min(150, (usableWidth - gap * (icons.length - 1)) / icons.length);
+        icons.forEach((item, i) => {
+          const x = margin + i * (iconSize + gap);
+          generatedLayers.push({
+            id: `ai_icon_${i}_${Date.now()}`,
+            slotType: item.category === "vehicles" ? "vehicle" : "weapon",
+            src: item.src,
+            fitMode: "contain",
+            x, y: 20, width: iconSize, height: iconSize,
+            slotX: x, slotY: 20, slotWidth: iconSize, slotHeight: iconSize,
+            rotation: 0, fitted: false,
+          });
+        });
       }
-      return remainingSlots;
+    }
+
+    // صف الشخصيات بالمنتصف (نفس المنطق بكل الأنماط)
+    if (characters.length > 0) {
+      const sideMargin = 30;
+      const gapBetween = 6;
+      const usableWidth = CANVAS_W - sideMargin * 2 - gapBetween * (characters.length - 1);
+      const slotWidth = usableWidth / characters.length;
+      const charHeight = 700;
+      const charY = CANVAS_H - charHeight - 40;
+      characters.forEach((item, i) => {
+        const x = sideMargin + i * (slotWidth + gapBetween);
+        generatedLayers.push({
+          id: `ai_char_${i}_${Date.now()}`,
+          slotType: "character",
+          src: item.src,
+          fitMode: "height",
+          x, y: charY, width: slotWidth, height: charHeight,
+          slotX: x, slotY: charY, slotWidth, slotHeight: charHeight,
+          rotation: 0, fitted: false,
+        });
+      });
+    }
+
+    setActiveTemplate({ id: "ai-design", name: "تصميم بالذكاء الاصطناعي", placeholders: [] });
+    setSlots([{ id: "ai_bg_slot", type: "background", x: 0, y: 0, width: CANVAS_W, height: CANVAS_H }]);
+    setLayers(generatedLayers);
+    setSelectedId(null);
+  };
+
+  const handleSmartFillConfirm = (selectedItems) => {
+    setSmartFillOpen(false);
+
+    let remainingSlots = [...slots];
+    const newLayers = [];
+    let filledAnyCharacter = false;
+
+    selectedItems.forEach((item, i) => {
+      const targetType = CATEGORY_TO_SLOT_TYPE[item.category] || item.category;
+      const idx = remainingSlots.findIndex((s) => s.type === targetType);
+      if (idx === -1) return; // ما في مكان فاضي مناسب لهالنوع، نتجاهله
+      const slot = remainingSlots[idx];
+      remainingSlots = remainingSlots.filter((_, si) => si !== idx);
+      const fitMode = targetType === "character" ? "height" : "contain";
+      if (targetType === "character") filledAnyCharacter = true;
+      newLayers.push({
+        id: `layer_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+        slotId: slot.id,
+        slotType: slot.type,
+        src: item.src,
+        fitMode,
+        x: slot.x,
+        y: slot.y,
+        width: slot.width,
+        height: slot.height,
+        slotX: slot.x,
+        slotY: slot.y,
+        slotWidth: slot.width,
+        slotHeight: slot.height,
+        rotation: 0,
+        fitted: false,
+        isBackground: false,
+      });
     });
+
+    setSlots(remainingSlots);
+    if (newLayers.length > 0) {
+      setLayers((prev) => [...prev, ...newLayers]);
+    }
+    if (filledAnyCharacter) {
+      unifyCharacterHeights();
+    }
   };
 
   const replaceLayerImage = (src) => {
     if (!replaceTargetId) return;
+    const replacedLayer = layers.find((l) => l.id === replaceTargetId);
     setLayers((prev) =>
       prev.map((l) =>
         l.id === replaceTargetId
@@ -541,6 +730,9 @@ export default function DesignStudio() {
       )
     );
     setReplaceTargetId(null);
+    if (replacedLayer?.slotType === "character") {
+      unifyCharacterHeights();
+    }
   };
 
   const startReplace = (layer) => {
@@ -659,8 +851,27 @@ export default function DesignStudio() {
     setSelectedId(null);
   };
 
+  const addVerticalRuler = () => {
+    setRulers((prev) => [...prev, { id: `ruler_${Date.now()}`, type: "v", pos: CANVAS_WIDTH / 2 }]);
+  };
+  const addHorizontalRuler = () => {
+    setRulers((prev) => [...prev, { id: `ruler_${Date.now()}`, type: "h", pos: CANVAS_HEIGHT / 2 }]);
+  };
+  const updateRulerPos = (id, pos) => {
+    setRulers((prev) => prev.map((r) => (r.id === id ? { ...r, pos } : r)));
+  };
+  const removeRuler = (id) => {
+    setRulers((prev) => prev.filter((r) => r.id !== id));
+  };
+
   const handleExport = () => {
+    setSelectedId(null); // نلغي أي تحديد عشان مربع التحكم ما يظهر بالصورة
+    overlayLayerRef.current?.hide();
+    stageRef.current.batchDraw();
     const uri = stageRef.current.toDataURL({ pixelRatio: 1 / scale });
+    overlayLayerRef.current?.show();
+    stageRef.current.batchDraw();
+
     const a = document.createElement("a");
     a.href = uri;
     a.download = `design_${Date.now()}.png`;
@@ -685,11 +896,11 @@ export default function DesignStudio() {
         .map((l) => ({
           id: l.slotId || `slot_${l.id}`,
           type: l.slotType || (l.isBackground ? "background" : "other"),
-          x: l.slotX ?? l.x,
-          y: l.slotY ?? l.y,
-          width: l.slotWidth ?? l.width,
-          height: l.slotHeight ?? l.height,
-          rotation: 0,
+          x: l.x,
+          y: l.y,
+          width: l.width,
+          height: l.height,
+          rotation: l.rotation || 0,
           default_image_url: l.src,
         }));
 
@@ -701,7 +912,11 @@ export default function DesignStudio() {
       // نلتقط معاينة مصغّرة من الكانفاس الحالي ونرفعها كـ thumbnail
       let thumbnailUrl = null;
       try {
+        overlayLayerRef.current?.hide();
+        stageRef.current.batchDraw();
         const previewUri = stageRef.current.toDataURL({ pixelRatio: 0.25 });
+        overlayLayerRef.current?.show();
+        stageRef.current.batchDraw();
         const previewBlob = await (await fetch(previewUri)).blob();
         const previewPath = `game-library/template-previews/${Date.now()}_preview.png`;
         const { error: previewUploadError } = await supabase.storage
@@ -747,16 +962,33 @@ export default function DesignStudio() {
     return (
       <div>
         <h1 className="text-2xl font-bold mb-1">Design Studio</h1>
-        <p className="text-neutral-500 text-sm mb-6">اختر تيمبلت جاهز، أو ابدأ من الصفر</p>
+        <p className="text-neutral-500 text-sm mb-6">
+          اختر <strong className="text-neutral-300">Quick Designer</strong> (قالب جاهز تبدّل عناصره) أو{" "}
+          <strong className="text-neutral-300">Pro Designer</strong> (تصميم من الصفر)
+        </p>
 
         <button
           onClick={() => applyTemplate({ id: "blank", name: "كانفاس فارغ", placeholders: [] })}
-          className="w-full mb-6 bg-neutral-900 border-2 border-dashed border-neutral-700 hover:border-amber-500 rounded-2xl p-5 text-center transition-colors"
+          className="w-full mb-4 bg-neutral-900 border-2 border-dashed border-neutral-700 hover:border-amber-500 rounded-2xl p-5 text-center transition-colors"
         >
           <span className="text-2xl">🖌</span>
-          <p className="font-semibold mt-1">كانفاس فارغ — ابدأ من الصفر</p>
+          <p className="font-semibold mt-1">Pro Designer — كانفاس فارغ من الصفر</p>
           <p className="text-neutral-500 text-xs">للمصممين المحترفين: تسحب وترتب كل شي بنفسك</p>
         </button>
+
+        <button
+          onClick={() => {
+            setSmartFillMode("ai");
+            setSmartFillOpen(true);
+          }}
+          className="w-full mb-6 bg-gradient-to-l from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-2xl p-5 text-center transition-colors"
+        >
+          <span className="text-2xl">🤖</span>
+          <p className="font-semibold mt-1 text-white">توليد سريع بالذكاء الاصطناعي</p>
+          <p className="text-purple-100 text-xs">اختر شخصياتك وأسلحتك، ويرتّبهم لك تلقائياً بضغطة وحدة</p>
+        </button>
+
+        <p className="text-neutral-600 text-xs mb-3">— أو اختر Quick Designer من التصاميم الجاهزة بالأسفل —</p>
 
         {templates.length === 0 ? (
           <p className="text-neutral-500 text-sm">
@@ -797,6 +1029,56 @@ export default function DesignStudio() {
             })}
           </div>
         )}
+
+        {smartFillOpen && (
+          <SmartFillModal
+            onClose={() => setSmartFillOpen(false)}
+            onConfirm={smartFillMode === "ai" ? handleAIDesignConfirm : handleSmartFillConfirm}
+          />
+        )}
+
+        {layoutChooserOpen && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-lg p-6">
+              <h2 className="font-bold text-lg mb-1">اختر نمط التنسيق</h2>
+              <p className="text-neutral-500 text-sm mb-5">
+                نفس العناصر اللي اخترتها، بس بترتيب مختلف — جرب وشوف أي وحدة تعجبك أكثر
+              </p>
+              <div className="grid grid-cols-1 gap-3">
+                <button
+                  onClick={() => generateLayoutFromStyle("classic")}
+                  className="bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hover:border-amber-500 rounded-xl p-4 text-start transition-colors"
+                >
+                  <p className="font-semibold">📏 كلاسيكي</p>
+                  <p className="text-neutral-500 text-xs">صف واحد ممتد للأسلحة/السيارات فوق البطاقة كاملة</p>
+                </button>
+                <button
+                  onClick={() => generateLayoutFromStyle("split")}
+                  className="bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hover:border-amber-500 rounded-xl p-4 text-start transition-colors"
+                >
+                  <p className="font-semibold">↔️ موزّع (يمين ويسار)</p>
+                  <p className="text-neutral-500 text-xs">نص الأيقونات يسار فوق، والنص الثاني يمين فوق</p>
+                </button>
+                <button
+                  onClick={() => generateLayoutFromStyle("compact")}
+                  className="bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hover:border-amber-500 rounded-xl p-4 text-start transition-colors"
+                >
+                  <p className="font-semibold">📦 مضغوط</p>
+                  <p className="text-neutral-500 text-xs">الأيقونات بزاوية علوية يسار بصفين صغار، مساحة أكبر للشخصيات</p>
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  setLayoutChooserOpen(false);
+                  setPendingAIItems(null);
+                }}
+                className="w-full mt-4 text-neutral-500 hover:text-neutral-300 text-sm"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -835,10 +1117,25 @@ export default function DesignStudio() {
           📏 توحيد ارتفاع كل الشخصيات
         </button>
         <button
-          onClick={() => setSmartFillOpen(true)}
+          onClick={() => {
+            setSmartFillMode("fill");
+            setSmartFillOpen(true);
+          }}
           className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
         >
           ⚡ تعبئة ذكية
+        </button>
+        <button
+          onClick={addVerticalRuler}
+          className="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded-xl text-sm transition-colors"
+        >
+          ┃ مسطرة عمودية
+        </button>
+        <button
+          onClick={addHorizontalRuler}
+          className="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded-xl text-sm transition-colors"
+        >
+          ─ مسطرة أفقية
         </button>
       </div>
 
@@ -928,10 +1225,6 @@ export default function DesignStudio() {
                 <BackgroundImage key={l.id} src={l.src} blur={bgBlur} slot={l} />
               ))}
 
-            {slots.map((slot) => (
-              <EmptySlot key={slot.id} slot={slot} onClick={() => onSlotClick(slot)} />
-            ))}
-
             {layers
               .filter((l) => !l.isBackground)
               .map((layer) =>
@@ -958,10 +1251,50 @@ export default function DesignStudio() {
                   />
                 )
               )}
+          </Layer>
 
+          {/* طبقة أدوات التصميم فقط (الأماكن الفارغة + خطوط المحاذاة) - نخفيها
+              مؤقتاً وقت التصدير عشان ما تظهر بالصورة النهائية أبداً */}
+          <Layer ref={overlayLayerRef} listening={true}>
+            {slots.map((slot) => (
+              <EmptySlot key={slot.id} slot={slot} onClick={() => onSlotClick(slot)} />
+            ))}
             {guideLines.map((points, i) => (
               <Line key={i} points={points} stroke="#3b82f6" strokeWidth={1.5} dash={[6, 4]} listening={false} />
             ))}
+            {rulers.map((r) =>
+              r.type === "v" ? (
+                <Line
+                  key={r.id}
+                  points={[0, 0, 0, CANVAS_HEIGHT]}
+                  x={r.pos}
+                  y={0}
+                  stroke="#22d3ee"
+                  strokeWidth={2}
+                  dash={[4, 4]}
+                  draggable
+                  dragBoundFunc={(pos) => ({ x: pos.x, y: 0 })}
+                  onDragMove={(e) => updateRulerPos(r.id, e.target.x())}
+                  onDblClick={() => removeRuler(r.id)}
+                  onDblTap={() => removeRuler(r.id)}
+                />
+              ) : (
+                <Line
+                  key={r.id}
+                  points={[0, 0, CANVAS_WIDTH, 0]}
+                  x={0}
+                  y={r.pos}
+                  stroke="#22d3ee"
+                  strokeWidth={2}
+                  dash={[4, 4]}
+                  draggable
+                  dragBoundFunc={(pos) => ({ x: 0, y: pos.y })}
+                  onDragMove={(e) => updateRulerPos(r.id, e.target.y())}
+                  onDblClick={() => removeRuler(r.id)}
+                  onDblTap={() => removeRuler(r.id)}
+                />
+              )
+            )}
           </Layer>
         </Stage>
       </div>
@@ -990,7 +1323,10 @@ export default function DesignStudio() {
       )}
 
       {smartFillOpen && (
-        <SmartFillModal onClose={() => setSmartFillOpen(false)} onConfirm={handleSmartFillConfirm} />
+        <SmartFillModal
+          onClose={() => setSmartFillOpen(false)}
+          onConfirm={smartFillMode === "ai" ? handleAIDesignConfirm : handleSmartFillConfirm}
+        />
       )}
     </div>
   );

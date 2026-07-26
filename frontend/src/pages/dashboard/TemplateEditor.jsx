@@ -298,6 +298,90 @@ export default function TemplateEditor() {
     });
   };
 
+  const [importing, setImporting] = useState(false);
+  const referenceInputRef = useRef();
+
+  const handleImportReference = async (file) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/detect-full-layout", { method: "POST", body: formData });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `فشل الكشف (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      const { image_width, image_height, characters, top_cells, bottom_cells } = data;
+
+      if ((!characters || characters.length === 0) && (!top_cells || top_cells.length === 0)) {
+        alert("ما قدر يكتشف أي عنصر بهالصورة. جرب صورة أوضح.");
+        return;
+      }
+
+      const scaleX = CANVAS_WIDTH / image_width;
+      const scaleY = CANVAS_HEIGHT / image_height;
+      const generated = [];
+
+      (characters || []).forEach((b, i) => {
+        generated.push({
+          _localId: `imported_char_${i}_${Date.now()}`,
+          id: `character_${i + 1}`,
+          type: "character",
+          x: Math.round(b.x1 * scaleX),
+          y: Math.round(b.y1 * scaleY),
+          width: Math.round((b.x2 - b.x1) * scaleX),
+          height: Math.round((b.y2 - b.y1) * scaleY),
+          rotation: 0,
+          z_index: i,
+        });
+      });
+
+      // خلايا الشبكة فوق الشخصيات - نفترضها أسلحة/سيارات (نوع "weapon" افتراضياً)
+      (top_cells || []).forEach((c, i) => {
+        generated.push({
+          _localId: `imported_top_${i}_${Date.now()}`,
+          id: `weapon_${i + 1}`,
+          type: "weapon",
+          x: Math.round(c.x * scaleX),
+          y: Math.round(c.y * scaleY),
+          width: Math.round(c.w * scaleX),
+          height: Math.round(c.h * scaleY),
+          rotation: 0,
+          z_index: 100 + i,
+        });
+      });
+
+      // خلايا الشبكة تحت الشخصيات - نفترضها إطارات/شارات (نوع "frame" افتراضياً)
+      (bottom_cells || []).forEach((c, i) => {
+        generated.push({
+          _localId: `imported_bottom_${i}_${Date.now()}`,
+          id: `frame_${i + 1}`,
+          type: "frame",
+          x: Math.round(c.x * scaleX),
+          y: Math.round(c.y * scaleY),
+          width: Math.round(c.w * scaleX),
+          height: Math.round(c.h * scaleY),
+          rotation: 0,
+          z_index: 200 + i,
+        });
+      });
+
+      setPlaceholders(generated);
+      alert(
+        `تم اكتشاف ${characters?.length || 0} شخصية، ${top_cells?.length || 0} عنصر بالشبكة العلوية، ` +
+        `${bottom_cells?.length || 0} عنصر بالشبكة السفلية!\n\n` +
+        `⚠️ العناصر بالشبكة انحطت افتراضياً كـ"سلاح" (فوق) و"إطار" (تحت) - ` +
+        `لو فيها سيارات أو أنواع ثانية، حدد العنصر وغيّر نوعه يدوياً قبل الحفظ.`
+      );
+    } catch (err) {
+      alert(err.message || "فشل استيراد الصورة المرجعية.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const openDefaultImagePicker = () => {
     if (!selectedId) return;
     const selected = placeholders.find((p) => p._localId === selectedId);
@@ -507,6 +591,30 @@ export default function TemplateEditor() {
             🪄 توليد التكوين
           </button>
         </div>
+      </div>
+
+      <div className="bg-neutral-900 border border-purple-500/30 rounded-xl p-4 mb-4">
+        <p className="text-purple-400 text-xs font-medium mb-3">
+          📷 استيراد صورة مرجعية — يكتشف تلقائياً مكان كل شخصية (بالذكاء الاصطناعي) + شبكات
+          الأسلحة/السيارات فوق وتحت (بتحليل الألوان)، بضغطة وحدة
+        </p>
+        <button
+          onClick={() => referenceInputRef.current?.click()}
+          disabled={importing}
+          className="bg-purple-600 hover:bg-purple-500 disabled:bg-neutral-700 text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition-colors"
+        >
+          {importing ? "جارِ الكشف... (قد يأخذ دقيقة)" : "📷 اختر صورة واكتشف الشخصيات"}
+        </button>
+        <input
+          ref={referenceInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            handleImportReference(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
       </div>
 
       <div className="flex gap-2 flex-wrap mb-4 items-center">
