@@ -7,6 +7,10 @@ __pycache__/
 node_modules/
 frontend/dist/
 
+# بيئة محلية (مفاتيح Supabase وغيرها)
+.env
+!.env.example
+
 # النماذج الثقيلة
 backend/weights/
 backend/sam2-main/

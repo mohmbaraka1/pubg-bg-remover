@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import ManualEraser from "./ManualEraser";
 
@@ -40,9 +40,59 @@ let idCounter = 0;
 const nextId = () => `item_${Date.now()}_${idCounter++}`;
 
 export default function BackgroundRemover() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const accountId = searchParams.get("accountId");
   const category = searchParams.get("category") || "other";
+
+  const [subscription, setSubscription] = useState(null); // {plan, used, limit, period_end}
+  const [loadingSubscription, setLoadingSubscription] = useState(true);
+
+  const refreshSubscription = useCallback(async () => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { data, error } = await supabase.rpc("ensure_subscription", {
+      p_user_id: userData.user.id,
+    });
+    if (error) {
+      console.error("فشل جلب الاشتراك:", error);
+      setLoadingSubscription(false);
+      return;
+    }
+    if (data) {
+      const limit = data.plan === "pro" ? 5 : 1;
+      setSubscription({
+        plan: data.plan,
+        used: data.images_used_this_period,
+        limit,
+        period_end: data.period_end,
+      });
+    }
+    setLoadingSubscription(false);
+  }, []);
+
+  useEffect(() => {
+    refreshSubscription();
+  }, [refreshSubscription]);
+
+  const consumeCredit = async () => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return { allowed: false };
+    const { data, error } = await supabase.rpc("consume_image_credit", {
+      p_user_id: userData.user.id,
+    });
+    if (error) {
+      console.error("فشل التحقق من الرصيد:", error);
+      return { allowed: false };
+    }
+    setSubscription({
+      plan: data.plan,
+      used: data.used,
+      limit: data.limit,
+      period_end: data.period_end,
+    });
+    return data;
+  };
 
   const [queue, setQueue] = useState([]); // { id, file, name, beforeUrl, afterUrl, afterBlob, status, error }
   const [editingItemId, setEditingItemId] = useState(null);
@@ -194,6 +244,21 @@ export default function BackgroundRemover() {
   };
 
   const processItem = async (item) => {
+    // نتحقق من الرصيد بس أول مرة نعالج فيها هالصورة (مو عند كل تعديل
+    // بالإعدادات المتقدمة اللي تستخدم /tune على نفس الصورة أصلاً)
+    const isFirstProcessing = !item.sessionId && item.status !== ITEM_STATUS.DONE;
+    if (isFirstProcessing) {
+      const credit = await consumeCredit();
+      if (!credit.allowed) {
+        updateItem(item.id, {
+          status: ITEM_STATUS.ERROR,
+          error: `وصلت للحد الأقصى لخطتك (${credit.limit} صورة/شهر).`,
+        });
+        navigate("/dashboard/upgrade");
+        return;
+      }
+    }
+
     // بوضع الإعدادات المخصصة: نحضّر الجلسة مرة وحدة (ثقيلة)، وبعدها كل
     // تعديل بالشرائط يستخدم /tune فقط (سريعة، بدون إعادة تشغيل النماذج).
     if (useCustomSettings) {
@@ -339,6 +404,26 @@ export default function BackgroundRemover() {
               ? `الصور ستُحفظ تلقائياً بقسم ${CATEGORY_LABELS[category] || category}`
               : "ارفع صورة واحدة أو حتى 100 صورة دفعة واحدة"}
           </p>
+
+          {!loadingSubscription && subscription && (
+            <div
+              className={`inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-xl text-xs font-medium ${
+                subscription.used >= subscription.limit
+                  ? "bg-red-500/15 text-red-400 border border-red-500/30"
+                  : "bg-neutral-800 text-neutral-300 border border-neutral-700"
+              }`}
+            >
+              <span>
+                {subscription.plan === "pro" ? "⭐ خطة Pro" : "🆓 خطة Free"} — {subscription.used}/
+                {subscription.limit} صورة هذا الشهر
+              </span>
+              {subscription.plan === "free" && (
+                <span className="text-amber-400 underline underline-offset-2 cursor-pointer">
+                  رقّي لـ Pro
+                </span>
+              )}
+            </div>
+          )}
         </header>
 
         <div className="mb-6">
