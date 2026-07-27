@@ -338,12 +338,20 @@ export default function TemplateEditor() {
         });
       });
 
-      // خلايا الشبكة فوق الشخصيات - نفترضها أسلحة/سيارات (نوع "weapon" افتراضياً)
+      // كل مجموعة أعمدة (block) مكتشفة تُعامل كنوع منفصل: أول مجموعة (الأقرب
+      // لليسار عادة) نفترضها أسلحة، والباقي مركبات - تخمين افتراضي فقط
+      // (المستخدم يصحّح النوع يدوياً لو غلط)، لكن الأهم إن كل مجموعة انفصلت
+      // عن جاراتها بموضع/حجم صحيح بدل اعتبار الشريط العلوي كامل خلية واحدة
+      const topBlockCount = new Set((top_cells || []).map((c) => c.block ?? 0)).size;
+      const topBlockCounters = {};
       (top_cells || []).forEach((c, i) => {
+        const blockIdx = c.block ?? 0;
+        const type = blockIdx === 0 ? "weapon" : "vehicle";
+        topBlockCounters[blockIdx] = (topBlockCounters[blockIdx] || 0) + 1;
         generated.push({
           _localId: `imported_top_${i}_${Date.now()}`,
-          id: `weapon_${i + 1}`,
-          type: "weapon",
+          id: `${type}_${topBlockCounters[blockIdx]}`,
+          type,
           x: Math.round(c.x * scaleX),
           y: Math.round(c.y * scaleY),
           width: Math.round(c.w * scaleX),
@@ -354,10 +362,13 @@ export default function TemplateEditor() {
       });
 
       // خلايا الشبكة تحت الشخصيات - نفترضها إطارات/شارات (نوع "frame" افتراضياً)
+      const bottomBlockCounters = {};
       (bottom_cells || []).forEach((c, i) => {
+        const blockIdx = c.block ?? 0;
+        bottomBlockCounters[blockIdx] = (bottomBlockCounters[blockIdx] || 0) + 1;
         generated.push({
           _localId: `imported_bottom_${i}_${Date.now()}`,
-          id: `frame_${i + 1}`,
+          id: `frame_b${blockIdx}_${bottomBlockCounters[blockIdx]}`,
           type: "frame",
           x: Math.round(c.x * scaleX),
           y: Math.round(c.y * scaleY),
@@ -370,10 +381,13 @@ export default function TemplateEditor() {
 
       setPlaceholders(generated);
       alert(
-        `تم اكتشاف ${characters?.length || 0} شخصية، ${top_cells?.length || 0} عنصر بالشبكة العلوية، ` +
+        `تم اكتشاف ${characters?.length || 0} شخصية (بنفس تباعد/حجم الصف الأصلي)، ` +
+        `${top_cells?.length || 0} عنصر بالشبكة العلوية (${topBlockCount} مجموعة منفصلة)، ` +
         `${bottom_cells?.length || 0} عنصر بالشبكة السفلية!\n\n` +
-        `⚠️ العناصر بالشبكة انحطت افتراضياً كـ"سلاح" (فوق) و"إطار" (تحت) - ` +
-        `لو فيها سيارات أو أنواع ثانية، حدد العنصر وغيّر نوعه يدوياً قبل الحفظ.`
+        `⚠️ أول مجموعة أعمدة فوق انحطت "سلاح" والباقي "مركبة"، وكل العناصر تحت ` +
+        `انحطت "إطار" - لو فيها نوع مختلف (خوذة، شنطة...)، حدد العنصر وغيّر نوعه ` +
+        `يدوياً قبل الحفظ. مناطق غير منتظمة (شارات/نصوص مختلطة) قد ما تنكشف تلقائياً - ` +
+        `أضفها يدوياً لو احتجت.`
       );
     } catch (err) {
       alert(err.message || "فشل استيراد الصورة المرجعية.");

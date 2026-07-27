@@ -394,82 +394,106 @@ class BackgroundRemovalPipeline:
         keep_mask = (labels == main_label).astype(np.uint8)
         cleaned_alpha = alpha * keep_mask
         return cleaned_alpha
-    def _detect_grid_cell_boxes(self, region_bgr: np.ndarray) -> list[tuple]:
-        """يرجّع صناديق (x, y, w, h) نسبية للمنطقة المعطاة - نفس خوارزمية
-        كشف البطاقات بالألوان المستخدمة بأداة Grid Extractor، مع إزالة
-        التداخل، ورجوع تلقائي لشبكة منتظمة لو الكشف باللون غير موثوق."""
-        rh, rw = region_bgr.shape[:2]
-        if rh < 5 or rw < 5:
-            return []
+
+    @staticmethod
+    def _panel_color_mask(region_bgr: np.ndarray) -> np.ndarray:
+        """قناع ثنائي يحدد بكسلات "خلفية بطاقة اللعبة" (نفس اللون الموحّد
+        الأحمر/الموف الغامق المستخدم لكل خانات الأسلحة/السيارات/الشارات بغض
+        النظر عن الندرة) - مؤشر أوثق من ألوان حدود الندرة المتغيّرة، ويشمل
+        درجات إضاءة داكنة (V من 15) كانت تُقطَع سابقاً بعتبة أعلى فتُفقد بها
+        خلايا كاملة."""
         hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
-        color_ranges = [
-            ((140, 40, 60), (170, 255, 255)),
-            ((120, 40, 60), (150, 255, 255)),
-            ((0, 60, 60), (10, 255, 255)),
-            ((170, 60, 60), (180, 255, 255)),
-            ((15, 60, 100), (35, 255, 255)),
-        ]
-        combined_mask = np.zeros((rh, rw), dtype=np.uint8)
-        for lo, hi in color_ranges:
-            combined_mask = cv2.bitwise_or(combined_mask, cv2.inRange(hsv, np.array(lo), np.array(hi)))
-        kernel = np.ones((5, 5), np.uint8)
-        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
-        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        raw_boxes = []
-        min_area = max(300, (rw * rh) // 600)
+        h_, s_, v_ = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+        mask = (((h_ >= 140) & (h_ <= 180)) | (h_ <= 10)) & (s_ > 60) & (v_ >= 15) & (v_ <= 150)
+        return (mask.astype(np.uint8)) * 255
+
+    @staticmethod
+    def _segments_from_absolute_gaps(
+        profile: np.ndarray, gap_frac: float, min_seg: int = 15
+    ) -> list[tuple[int, int]]:
+        """يقسّم profile (كثافة القناع لكل عمود/صف) لمقاطع، حيث الفجوة
+        الحقيقية بين الخلايا تهبط قريباً من الصفر - على عكس التغيّر الطبيعي
+        داخل رسمة الأيقونة نفسها اللي يبقى أعلى بكثير من عتبة الفجوة، فما
+        يتسبب بتقطيع خاطئ داخل نفس الخلية (المشكلة اللي كانت بالعتبة النسبية
+        السابقة القائمة على نافذة محلية)."""
+        if profile.size == 0 or float(profile.max()) <= 0:
+            return []
+        threshold = float(profile.max()) * gap_frac
+        is_gap = profile < threshold
+        segments: list[tuple[int, int]] = []
+        start = None
+        for i, gap in enumerate(is_gap):
+            if not gap and start is None:
+                start = i
+            elif gap and start is not None:
+                if i - start >= min_seg:
+                    segments.append((start, i))
+                start = None
+        if start is not None and len(profile) - start >= min_seg:
+            segments.append((start, len(profile)))
+        return segments
+
+    def _detect_grid_cell_boxes(self, region_bgr: np.ndarray) -> list[tuple]:
+        """يرجّع صناديق (x, y, w, h, block_index) نسبية للمنطقة المعطاة.
+
+        بدل معاملة المنطقة كشبكة واحدة (كان يخلط أسلحة مع سيارات مع شارات
+        بنوع واحد ويكسر المحاذاة لو فيها أكثر من مجموعة أعمدة)، نقسّمها أولاً
+        لمجموعات أعمدة منفصلة فعلياً (كل مجموعة = صندوق أسلحة، صندوق سيارات...)
+        بالاعتماد على فجوات حقيقية بينها، ثم نكتشف صفوف/أعمدة كل مجموعة على
+        حدة. صفوف كل المجموعات بنفس الشريط الأفقي عادة تشترك بنفس الإيقاع
+        الرأسي، فنكتشفها مرة وحدة من القناع الكامل (إشارة أوضح بكثير، لأنها
+        تجمع كل الأيقونات بدل الاعتماد على مجموعة وحدة قد تكون قليلة العناصر).
+        أي مجموعة تُنتج أعمدة متفاوتة الحجم بشكل غير منطقي (محتوى غير منتظم
+        زي شارات/نصوص مو شبكة عناصر حقيقية) تُرفض بالكامل بدل ما تُرجع صناديق
+        غلط - أفضل نتجاهل منطقة غير واضحة من نعطي مواضع خاطئة."""
+        rh, rw = region_bgr.shape[:2]
+        if rh < 20 or rw < 20:
+            return []
+
+        mask = self._panel_color_mask(region_bgr)
+
+        close_kernel = np.ones((9, 25), np.uint8)
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        blocks = []
+        min_block_area = max(2000, (rw * rh) // 200)
         for cnt in contours:
             x, y, cw, ch = cv2.boundingRect(cnt)
-            if cw * ch > min_area and 0.5 < (cw / ch) < 2.0:
-                raw_boxes.append((x, y, cw, ch))
+            if cw * ch > min_block_area:
+                blocks.append((x, y, cw, ch))
+        if not blocks:
+            return []
+        blocks.sort(key=lambda b: b[0])
 
-        # === رفض الصناديق العملاقة غير الطبيعية (اندماج خاطئ بين عنصرين
-        # متجاورين بسبب تشابه لوني بالفراغ بينهم) - أي صندوق أكبر من 2.5
-        # ضعف المتوسط يُعتبر خطأ اندماج ويُرفض بدل ما يُحتسب كعنصر واحد ضخم
-        if len(raw_boxes) >= 3:
-            areas = [bw * bh for (_, _, bw, bh) in raw_boxes]
-            median_area = float(np.median(areas))
-            if median_area > 0:
-                raw_boxes = [b for b in raw_boxes if (b[2] * b[3]) < median_area * 2.5]
+        global_row_profile = mask.sum(axis=1).astype(float)
+        global_row_segs = self._segments_from_absolute_gaps(global_row_profile, gap_frac=0.35)
 
-        # === إزالة التداخل (NMS بسيط): لو صندوقين متداخلين بنسبة كبيرة،
-        # نحتفظ بالأكبر بس ونرمي الثاني (كان يسبب عناصر متكدّسة فوق بعض)
-        def iou(a, b):
-            ax1, ay1, aw, ah = a
-            bx1, by1, bw, bh = b
-            ax2, ay2, bx2, by2 = ax1 + aw, ay1 + ah, bx1 + bw, by1 + bh
-            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-            inter = iw * ih
-            union = aw * ah + bw * bh - inter
-            return inter / union if union > 0 else 0
+        all_cells: list[tuple] = []
+        for block_idx, (bx, by, bw, bh) in enumerate(blocks):
+            block_mask = mask[by:by + bh, bx:bx + bw]
+            col_profile = block_mask.sum(axis=0).astype(float)
+            col_segs = self._segments_from_absolute_gaps(col_profile, gap_frac=0.22)
+            if not col_segs:
+                continue
 
-        raw_boxes.sort(key=lambda b: -(b[2] * b[3]))  # الأكبر أولاً
-        deduped = []
-        for b in raw_boxes:
-            if all(iou(b, kept) < 0.3 for kept in deduped):
-                deduped.append(b)
+            row_segs = [(max(0, ry1 - by), min(bh, ry2 - by)) for (ry1, ry2) in global_row_segs]
+            row_segs = [(a, b) for (a, b) in row_segs if b - a > 10]
+            if not row_segs:
+                continue
 
-        # === رجوع تلقائي لشبكة منتظمة لو الكشف ضعيف جداً (أقل من 4 خلايا
-        # موثوقة) - نستخدم متوسط حجم الخلايا اللي انكشفت (لو وُجدت) لتخمين
-        # حجم الخلية القياسي، وإلا نقسّم المنطقة كاملة لخلايا مربّعة تقريبية
-        if len(deduped) < 4:
-            if deduped:
-                avg_w = int(np.median([b[2] for b in deduped]))
-                avg_h = int(np.median([b[3] for b in deduped]))
-            else:
-                avg_w = avg_h = max(40, min(rw, rh) // 8)
-            avg_w = max(20, avg_w)
-            avg_h = max(20, avg_h)
-            cols = max(1, rw // avg_w)
-            rows = max(1, rh // avg_h)
-            deduped = []
-            for r in range(rows):
-                for c in range(cols):
-                    deduped.append((c * (rw // cols), r * (rh // rows), rw // cols, rh // rows))
+            # فحص انتظام: خلايا شبكة العناصر الحقيقية متقاربة الحجم. تفاوت
+            # كبير (شارات/نصوص مختلطة، مو شبكة) يعني المحتوى غير منتظم فنتجاهل
+            # هذي المجموعة كاملة بدل ما نطلع صناديق مو دقيقة
+            col_widths = [b - a for a, b in col_segs]
+            if max(col_widths) > min(col_widths) * 2.2:
+                continue
 
-        deduped.sort(key=lambda b: (round(b[1] / 40), b[0]))
-        return deduped
+            for (ry1, ry2) in row_segs:
+                for (cx1, cx2) in col_segs:
+                    all_cells.append((bx + cx1, by + ry1, cx2 - cx1, ry2 - ry1, block_idx))
+
+        all_cells.sort(key=lambda b: (b[4], round(b[1] / 40), b[0]))
+        return all_cells
 
     def detect_full_template_layout(self, image_bytes: bytes) -> dict:
         """
@@ -477,31 +501,41 @@ class BackgroundRemovalPipeline:
         الأسلحة/السيارات فوق وتحت صف الشخصيات (تحليل ألوان البطاقات) -
         لبناء تيمبلت شامل مطابق للصورة المرجعية بأقل تدخل يدوي.
         """
-        self.load_all()
+        # يحتاج YOLO فقط (كشف أشخاص) + تحليل ألوان بحت - لا داعي لتحميل
+        # SAM2/BiRefNet الثقيلة هنا إطلاقاً (كانت تُحمَّل بلا فائدة وتبطئ
+        # أول استدعاء لهذا الزر بلا داعي)
+        self._load_yolo()
         image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         image_rgb = np.array(image_pil)
         image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
         h, w = image_bgr.shape[:2]
 
-        char_boxes = self._detect_all_characters(image_bgr)
+        # نبني "صف الشخصيات" الموحّد (الصف الرئيسي فقط، بارتفاع/خط أرض
+        # متسقين) بدل إرجاع كل صناديق YOLO الخام كما هي - انظر توثيق
+        # _build_character_row لسبب هذا التوحيد
+        char_boxes_raw = self._detect_all_characters(image_bgr)
+        char_boxes = self._build_character_row(char_boxes_raw)
         characters = [
             {"x1": b.x1, "y1": b.y1, "x2": b.x2, "y2": b.y2} for b in char_boxes
         ]
 
         if char_boxes:
-            char_top = int(np.percentile([b.y1 for b in char_boxes], 10))
+            char_top = min(b.y1 for b in char_boxes)
             char_bottom = max(b.y2 for b in char_boxes)
         else:
             char_top, char_bottom = h, h  # ما فيه شخصيات - نعتبر كل الصورة "فوق"
 
         top_region = image_bgr[0:char_top, :]
         top_boxes = self._detect_grid_cell_boxes(top_region)
-        top_cells = [{"x": x, "y": y, "w": cw, "h": ch} for (x, y, cw, ch) in top_boxes]
+        top_cells = [
+            {"x": x, "y": y, "w": cw, "h": ch, "block": blk} for (x, y, cw, ch, blk) in top_boxes
+        ]
 
         bottom_region = image_bgr[char_bottom:h, :]
         bottom_boxes = self._detect_grid_cell_boxes(bottom_region)
         bottom_cells = [
-            {"x": x, "y": y + char_bottom, "w": cw, "h": ch} for (x, y, cw, ch) in bottom_boxes
+            {"x": x, "y": y + char_bottom, "w": cw, "h": ch, "block": blk}
+            for (x, y, cw, ch, blk) in bottom_boxes
         ]
 
         return {
@@ -518,7 +552,7 @@ class BackgroundRemovalPipeline:
         قص أو إزالة خلفية (سريعة جداً، ثوانٍ). يُستخدم لبناء تيمبلتات مطابقة
         تلقائياً لمواضع الشخصيات الحقيقية بصورة مرجعية.
         """
-        self.load_all()
+        self._load_yolo()
         image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         image_rgb = np.array(image_pil)
         image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
@@ -565,8 +599,66 @@ class BackgroundRemovalPipeline:
                 continue
             detected.append(PersonBox(int(x1), int(y1), int(x2), int(y2), conf))
 
-        detected.sort(key=lambda b: b.x1)  # من اليسار لليمين
-        return detected
+        # === إزالة الكشف المكرر لنفس الشخص (NMS) ===
+        # عتبة iou العالية (0.85) بالكشف نفسه فوق تسمح أحياناً بصندوقين
+        # متداخلين بقوة لنفس الشخص (خصوصاً بصور الاصطفاف المزدحمة) - نحتفظ
+        # هنا بأعلى ثقة منهم فقط ونرمي أي صندوق آخر يتداخل معه بنسبة كبيرة
+        def _iou(a: PersonBox, b: PersonBox) -> float:
+            ix1, iy1 = max(a.x1, b.x1), max(a.y1, b.y1)
+            ix2, iy2 = min(a.x2, b.x2), min(a.y2, b.y2)
+            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+            inter = iw * ih
+            a_area = (a.x2 - a.x1) * (a.y2 - a.y1)
+            b_area = (b.x2 - b.x1) * (b.y2 - b.y1)
+            union = a_area + b_area - inter
+            return inter / union if union > 0 else 0.0
+
+        detected.sort(key=lambda b: -b.confidence)
+        deduped: list[PersonBox] = []
+        for b in detected:
+            if all(_iou(b, kept) < 0.35 for kept in deduped):
+                deduped.append(b)
+
+        deduped.sort(key=lambda b: b.x1)  # من اليسار لليمين
+        return deduped
+
+    @staticmethod
+    def _build_character_row(char_boxes: list[PersonBox]) -> list[PersonBox]:
+        """يجمّع الشخصيات المكتشفة لمجموعات حسب ارتفاع الرأس (y1): شخصيات
+        الصف الأمامي (الرئيسي) تشترك تقريباً بنفس y1، بينما أي شخصيات جزئية
+        تظهر خلف/بين الصف الرئيسي (يوضحها هذا النوع من صور اصطفاف الحسابات
+        عادة) يكون y1 عندها مختلف بوضوح لأنها أبعد/أصغر. نرجّع الصف الأكبر
+        فقط (الرئيسي) بعد توحيد ارتفاعه وخط أرضه (median الأعلى والأسفل بدل
+        القيمة الخام لكل صندوق) - لأن اختلاف الوضعية/الشعر/طول السلاح يعطي
+        صناديق YOLO متفاوتة الحجم قليلاً رغم إن الشخصيات فعلياً بنفس الحجم
+        تقريباً بالتصميم الأصلي؛ هذا يضمن تيمبلت بمسافات/أحجام متسقة فعلاً
+        بدل نسخ عشوائية الحجم من كشف YOLO الخام مباشرة."""
+        if not char_boxes:
+            return []
+
+        clusters: list[list[PersonBox]] = []
+        for b in sorted(char_boxes, key=lambda b: b.y1):
+            placed = False
+            for c in clusters:
+                if abs(b.y1 - c[0].y1) < 60:
+                    c.append(b)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([b])
+
+        main = max(clusters, key=len)
+        tops = sorted(b.y1 for b in main)
+        bottoms = sorted(b.y2 for b in main)
+        median_top = tops[len(tops) // 2]
+        median_bottom = bottoms[len(bottoms) // 2]
+
+        normalized = [
+            PersonBox(x1=b.x1, y1=median_top, x2=b.x2, y2=median_bottom, confidence=b.confidence)
+            for b in main
+        ]
+        normalized.sort(key=lambda b: b.x1)
+        return normalized
 
     # ------------------------------------------------------------------ #
     # الواجهة العامة: استخراج كل الشخصيات دفعة واحدة
