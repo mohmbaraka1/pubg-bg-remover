@@ -40,3 +40,10 @@ FSRCNN_SCALE = 4
 # ---- Upload limits ----
 MAX_UPLOAD_MB = 15
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+# ---- CORS ----
+# قائمة origins مفصولة بفواصل (مثلاً: "https://gsstudio.app,https://www.gsstudio.app")
+# عبر متغيّر بيئة CORS_ALLOWED_ORIGINS. لو غير معرّف (التطوير المحلي)، يُسمح
+# للكل "*" كما كان سابقاً. بالإنتاج لازم تحدّد نطاقك الحقيقي هنا.
+_cors_env = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]

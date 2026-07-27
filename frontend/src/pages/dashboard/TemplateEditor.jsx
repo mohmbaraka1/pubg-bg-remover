@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Transformer } from "react-konva";
 import { supabase } from "../../lib/supabase";
+import { apiUrl } from "../../lib/api";
 import AssetPickerModal from "../../components/AssetPickerModal";
 import BackgroundPickerModal from "../../components/BackgroundPickerModal";
 
@@ -307,7 +308,7 @@ export default function TemplateEditor() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/detect-full-layout", { method: "POST", body: formData });
+      const res = await fetch(apiUrl("/api/detect-full-layout"), { method: "POST", body: formData });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `فشل الكشف (HTTP ${res.status})`);

@@ -1,0 +1,36 @@
+# تشغيل الستاك كامل محلياً بحاويات (تجربة نشر حقيقية قبل أي استضافة فعلية):
+#   docker compose up --build
+# الموقع يفتح على http://localhost:8080 (nginx يمرّر /api للباك إند تلقائياً).
+#
+# لازم ملف .env بجذر المشروع (بجانب هذا الملف) فيه:
+#   VITE_SUPABASE_URL=...
+#   VITE_SUPABASE_ANON_KEY=...
+# (نفس قيم frontend/.env.example)
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      # بالإنتاج الحقيقي غيّرها لدومين الفرونت الفعلي بدل "*"
+      - CORS_ALLOWED_ORIGINS=*
+      - BG_REMOVER_DEVICE=cpu
+    volumes:
+      # يحافظ على أوزان SAM2/BiRefNet/YOLO المحمّلة بين إعادة التشغيل (بدون
+      # هذا الـ volume تُعاد كل تحميلها من الإنترنت من الصفر كل مرة)
+      - backend_weights:/app/weights
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_weights:

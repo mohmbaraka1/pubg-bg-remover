@@ -1,0 +1,6 @@
+sam2-main/
+weights/
+__pycache__/
+*.pyc
+venv/
+test_images/

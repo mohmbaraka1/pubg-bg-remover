@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { apiUrl } from "../lib/api";
 import ManualEraser from "./ManualEraser";
 
-const API_URL = "/api/remove-background";
-const PREPARE_URL = "/api/remove-background/prepare";
-const TUNE_URL = "/api/remove-background/tune";
+const API_URL = apiUrl("/api/remove-background");
+const PREPARE_URL = apiUrl("/api/remove-background/prepare");
+const TUNE_URL = apiUrl("/api/remove-background/tune");
 const MAX_FILES = 100;
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 

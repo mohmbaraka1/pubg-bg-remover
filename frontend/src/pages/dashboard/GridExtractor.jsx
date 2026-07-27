@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from "react-konva";
 import useImage from "use-image";
 import { supabase } from "../../lib/supabase";
+import { apiUrl } from "../../lib/api";
 
 const ADMIN_EMAIL = "mohammedbaraka842@gmail.com";
 const DISPLAY_MAX_WIDTH = 900;
-const GRID_SLICE_API = "/api/grid-slice";
+const GRID_SLICE_API = apiUrl("/api/grid-slice");
 
 const CATEGORIES = [
   { key: "weapons", label: "Weapons", hasTypes: true },
@@ -254,7 +255,7 @@ export default function GridExtractor() {
           const upscaleForm = new FormData();
           upscaleForm.append("file", blob, "cell.png");
           // eslint-disable-next-line no-await-in-loop
-          const upscaleRes = await fetch("/api/upscale", { method: "POST", body: upscaleForm });
+          const upscaleRes = await fetch(apiUrl("/api/upscale"), { method: "POST", body: upscaleForm });
           if (upscaleRes.ok) {
             blob = await upscaleRes.blob();
           } else {

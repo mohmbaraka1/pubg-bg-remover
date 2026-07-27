@@ -28,10 +28,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# في التطوير المحلي فقط. عند النشر (مرحلة لاحقة) يجب تقييد origins.
+# origins تُقرأ من متغيّر البيئة CORS_ALLOWED_ORIGINS وقت النشر (انظر
+# config.py) - افتراضياً "*" بالتطوير المحلي لو المتغيّر غير معرّف.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

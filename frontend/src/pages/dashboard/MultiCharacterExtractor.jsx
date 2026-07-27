@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
+import { apiUrl } from "../../lib/api";
 
-const API_URL = "/api/remove-background-multi";
+const API_URL = apiUrl("/api/remove-background-multi");
 
 export default function MultiCharacterExtractor() {
   const [searchParams] = useSearchParams();
