@@ -15,8 +15,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# pip أكثر تسامحاً مع انقطاعات الشبكة المؤقتة (نتصل بنت غير مستقر) - بدل ما
+# يفشل الطلب كامل على أول قطع اتصال
+ENV PIP_DEFAULT_TIMEOUT=120
+ENV PIP_RETRIES=15
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# كل مجموعة بخطوة RUN منفصلة = طبقة Docker محفوظة (cached) لحالها. لو صار
+# انقطاع نت بمنتصف خطوة، إعادة تشغيل البناء تكمل من نفس الخطوة فقط - بدل ما
+# تعيد تحميل كل شي (فاستابي + أوبن سي في + تورش + ساعة كاملة...) من الصفر
+# كل مرة يفشل تحميل ملف واحد أخير. القيم هنا لازم تنطابق مع requirements.txt.
+RUN pip install --no-cache-dir fastapi==0.115.0 "uvicorn[standard]==0.30.6" python-multipart==0.0.9
+RUN pip install --no-cache-dir pillow==10.4.0 opencv-python-headless==4.10.0.84 numpy==1.26.4
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    torch==2.5.1+cpu torchvision==0.20.1+cpu
+RUN pip install --no-cache-dir timm==1.0.9 transformers==4.44.2 huggingface_hub==0.24.6 accelerate==0.34.2
+RUN pip install --no-cache-dir ultralytics==8.2.103
+
+# --no-build-isolation: sam2 يحتاج torch وقت البناء (كشف CUDA/تجميع إضافات
+# اختيارية) - بدون هذا الخيار pip يبني بمكان معزول تماماً ويعيد تحميل torch
+# بالكامل من جديد هناك (كان يعلّق لأكثر من ساعة على نتنا البطيء) بدل ما
+# يستخدم النسخة المثبّتة أصلاً بالطبقة اللي فوق
+RUN pip install --no-cache-dir --no-build-isolation \
+    https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip
 
 COPY app ./app
 

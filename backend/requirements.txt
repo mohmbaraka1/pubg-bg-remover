@@ -9,8 +9,14 @@ opencv-python-headless==4.10.0.84
 numpy==1.26.4
 
 # ==== Deep Learning ====
-torch==2.4.1
-torchvision==0.19.1
+# نسخة CPU فقط (بدون CUDA/cuDNN المدمجة) - أخف بكثير من نسخة PyPI الافتراضية
+# (~180MB بدل ~750MB+) وكافية تماماً هنا، لأن BG_REMOVER_DEVICE=cpu بالحاوية
+# أصلاً (docker-compose.yml) بدون أي GPU passthrough. لو صار عندك استضافة
+# بـ GPU لاحقاً، احذف "+cpu" وسطر extra-index-url هذا وثبّت نسخة CUDA عادية.
+# ملاحظة: 2.5.1 (مو 2.4.1 كالسابق) لأن sam2 (فرع main الحالي) يتطلب torch>=2.5.1
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
 timm==1.0.9
 transformers==4.44.2
 huggingface_hub==0.24.6
@@ -20,8 +26,10 @@ accelerate==0.34.2
 ultralytics==8.2.103
 
 # ==== SAM2 (Segment Anything 2, Meta) ====
-# Installed directly from the official repo (no PyPI package yet).
-git+https://github.com/facebookresearch/sam2.git
+# Installed directly from the official repo (no PyPI package yet). Using the
+# zip archive instead of git+https:// - a single plain HTTP download, more
+# resilient on flaky connections than git's HTTP/2 protocol negotiation.
+https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip
 
 # Note: SAM2 checkpoints (e.g. sam2.1_hiera_large.pt) and the BiRefNet weights
 # ("ZhengPeng7/BiRefNet" on Hugging Face) are downloaded automatically on first
