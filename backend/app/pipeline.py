@@ -401,11 +401,28 @@ class BackgroundRemovalPipeline:
         الأحمر/الموف الغامق المستخدم لكل خانات الأسلحة/السيارات/الشارات بغض
         النظر عن الندرة) - مؤشر أوثق من ألوان حدود الندرة المتغيّرة، ويشمل
         درجات إضاءة داكنة (V من 15) كانت تُقطَع سابقاً بعتبة أعلى فتُفقد بها
-        خلايا كاملة."""
+        خلايا كاملة. يفشل لو خلفية الصورة نفسها (خلف البطاقات) بنفس مدى اللون
+        هذا (مثلاً خلفية غروب حمراء/برتقالية) - عندها نستخدم _panel_texture_mask
+        كبديل (انظر _detect_grid_cell_boxes)."""
         hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
         h_, s_, v_ = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
         mask = (((h_ >= 140) & (h_ <= 180)) | (h_ <= 10)) & (s_ > 60) & (v_ >= 15) & (v_ <= 150)
         return (mask.astype(np.uint8)) * 255
+
+    @staticmethod
+    def _panel_texture_mask(region_bgr: np.ndarray, k: int = 9, thresh: int = 8) -> np.ndarray:
+        """قناع بديل يعتمد على "التفصيل المحلي" (local texture) بدل اللون:
+        منطقة الأيقونات مليانة تفاصيل (رسمة كل سلاح/سيارة) فتعطي انحراف معياري
+        محلي عالٍ، بينما خلفية الصورة الفوتوغرافية (حتى لو نفس درجة لون
+        البطاقات) عادة أنعم بكثير. يفيد بالضبط بالحالات اللي يفشل فيها قناع
+        اللون (خلفية بنفس مدى الأحمر/الموف)."""
+        gray = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        mean = cv2.boxFilter(gray, -1, (k, k))
+        sq_mean = cv2.boxFilter(gray * gray, -1, (k, k))
+        variance = np.clip(sq_mean - mean * mean, 0, None)
+        std = np.sqrt(variance)
+        _, mask = cv2.threshold(std.astype(np.uint8), thresh, 255, cv2.THRESH_BINARY)
+        return mask
 
     @staticmethod
     def _segments_from_absolute_gaps(
@@ -433,67 +450,75 @@ class BackgroundRemovalPipeline:
             segments.append((start, len(profile)))
         return segments
 
+    @staticmethod
+    def _group_columns_into_blocks(
+        segments: list[tuple[int, int]]
+    ) -> list[list[tuple[int, int]]]:
+        """يجمّع مقاطع الأعمدة المتجاورة (فجوة صغيرة بينها - نفس مجموعة
+        الأسلحة/السيارات مثلاً) بمجموعة وحدة، ويبدأ مجموعة جديدة لو الفجوة
+        بينها كبيرة نسبياً (حدود مجموعة ثانية فعلياً). بدون خطوة إغلاق
+        مورفولوجي منفصلة تحتاج حجم نواة مضبوط يدوياً لكل صورة (كان يفشل: إما
+        يدمج مجموعتين متجاورتين ببعض، أو يفشل يوحّد خلايا نفس المجموعة)."""
+        if not segments:
+            return []
+        widths = [b - a for a, b in segments]
+        median_w = float(np.median(widths))
+        blocks: list[list[tuple[int, int]]] = [[segments[0]]]
+        for i in range(1, len(segments)):
+            gap = segments[i][0] - segments[i - 1][1]
+            if gap > max(median_w * 0.9, 25):
+                blocks.append([])
+            blocks[-1].append(segments[i])
+        return blocks
+
+    def _grid_cells_from_mask(self, mask: np.ndarray) -> list[tuple]:
+        """يحوّل قناع ثنائي (لون أو تفصيل) لصناديق خلايا (x, y, w, h, block).
+        يكتشف إيقاع الصفوف مرة وحدة من القناع كامل (كل الأيقونات مع بعض تعطي
+        إشارة أوضح من مجموعة عمودية وحدها)، ثم يقسّم الأعمدة ويجمّعها
+        لمجموعات - أي مجموعة أعمدتها متفاوتة الحجم بشكل غير منطقي (شارات/نصوص
+        مختلطة، مو شبكة عناصر حقيقية) تُرفض بدل ما تُرجع صناديق غلط."""
+        row_profile = mask.sum(axis=1).astype(float)
+        row_segs = self._segments_from_absolute_gaps(row_profile, gap_frac=0.35)
+        if not row_segs:
+            return []
+
+        col_profile = mask.sum(axis=0).astype(float)
+        col_segs = self._segments_from_absolute_gaps(col_profile, gap_frac=0.22)
+        if not col_segs:
+            return []
+
+        blocks = self._group_columns_into_blocks(col_segs)
+
+        all_cells: list[tuple] = []
+        for block_idx, block_segs in enumerate(blocks):
+            widths = [b - a for a, b in block_segs]
+            if len(widths) >= 2 and max(widths) > min(widths) * 2.2:
+                continue
+            for (ry1, ry2) in row_segs:
+                for (cx1, cx2) in block_segs:
+                    all_cells.append((cx1, ry1, cx2 - cx1, ry2 - ry1, block_idx))
+
+        all_cells.sort(key=lambda b: (b[4], round(b[1] / 40), b[0]))
+        return all_cells
+
     def _detect_grid_cell_boxes(self, region_bgr: np.ndarray) -> list[tuple]:
         """يرجّع صناديق (x, y, w, h, block_index) نسبية للمنطقة المعطاة.
 
-        بدل معاملة المنطقة كشبكة واحدة (كان يخلط أسلحة مع سيارات مع شارات
-        بنوع واحد ويكسر المحاذاة لو فيها أكثر من مجموعة أعمدة)، نقسّمها أولاً
-        لمجموعات أعمدة منفصلة فعلياً (كل مجموعة = صندوق أسلحة، صندوق سيارات...)
-        بالاعتماد على فجوات حقيقية بينها، ثم نكتشف صفوف/أعمدة كل مجموعة على
-        حدة. صفوف كل المجموعات بنفس الشريط الأفقي عادة تشترك بنفس الإيقاع
-        الرأسي، فنكتشفها مرة وحدة من القناع الكامل (إشارة أوضح بكثير، لأنها
-        تجمع كل الأيقونات بدل الاعتماد على مجموعة وحدة قد تكون قليلة العناصر).
-        أي مجموعة تُنتج أعمدة متفاوتة الحجم بشكل غير منطقي (محتوى غير منتظم
-        زي شارات/نصوص مو شبكة عناصر حقيقية) تُرفض بالكامل بدل ما تُرجع صناديق
-        غلط - أفضل نتجاهل منطقة غير واضحة من نعطي مواضع خاطئة."""
+        يجرّب قناع اللون أولاً (أدق عادة)، ولو رجّع خلايا قليلة جداً (يدل على
+        فشله - غالباً لأن خلفية الصورة نفسها بنفس مدى لون البطاقات) يجرّب
+        قناع التفصيل (texture) كبديل ويأخذ الأفضل بينهما. ولا واحد فيهم مثالي
+        لكل الخلفيات، لكن التبديل التلقائي بينهما يغطي حالات أكثر بكثير من
+        الاعتماد على واحد بس."""
         rh, rw = region_bgr.shape[:2]
         if rh < 20 or rw < 20:
             return []
 
-        mask = self._panel_color_mask(region_bgr)
+        color_cells = self._grid_cells_from_mask(self._panel_color_mask(region_bgr))
+        if len(color_cells) >= 6:
+            return color_cells
 
-        close_kernel = np.ones((9, 25), np.uint8)
-        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        blocks = []
-        min_block_area = max(2000, (rw * rh) // 200)
-        for cnt in contours:
-            x, y, cw, ch = cv2.boundingRect(cnt)
-            if cw * ch > min_block_area:
-                blocks.append((x, y, cw, ch))
-        if not blocks:
-            return []
-        blocks.sort(key=lambda b: b[0])
-
-        global_row_profile = mask.sum(axis=1).astype(float)
-        global_row_segs = self._segments_from_absolute_gaps(global_row_profile, gap_frac=0.35)
-
-        all_cells: list[tuple] = []
-        for block_idx, (bx, by, bw, bh) in enumerate(blocks):
-            block_mask = mask[by:by + bh, bx:bx + bw]
-            col_profile = block_mask.sum(axis=0).astype(float)
-            col_segs = self._segments_from_absolute_gaps(col_profile, gap_frac=0.22)
-            if not col_segs:
-                continue
-
-            row_segs = [(max(0, ry1 - by), min(bh, ry2 - by)) for (ry1, ry2) in global_row_segs]
-            row_segs = [(a, b) for (a, b) in row_segs if b - a > 10]
-            if not row_segs:
-                continue
-
-            # فحص انتظام: خلايا شبكة العناصر الحقيقية متقاربة الحجم. تفاوت
-            # كبير (شارات/نصوص مختلطة، مو شبكة) يعني المحتوى غير منتظم فنتجاهل
-            # هذي المجموعة كاملة بدل ما نطلع صناديق مو دقيقة
-            col_widths = [b - a for a, b in col_segs]
-            if max(col_widths) > min(col_widths) * 2.2:
-                continue
-
-            for (ry1, ry2) in row_segs:
-                for (cx1, cx2) in col_segs:
-                    all_cells.append((bx + cx1, by + ry1, cx2 - cx1, ry2 - ry1, block_idx))
-
-        all_cells.sort(key=lambda b: (b[4], round(b[1] / 40), b[0]))
-        return all_cells
+        texture_cells = self._grid_cells_from_mask(self._panel_texture_mask(region_bgr))
+        return texture_cells if len(texture_cells) > len(color_cells) else color_cells
 
     def detect_full_template_layout(self, image_bytes: bytes) -> dict:
         """
