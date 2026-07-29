@@ -23,6 +23,9 @@ const CATEGORY_LABELS = {
   emotes: "Emotes",
   planes: "Plane Skins",
   boats: "Boat Skins",
+  mythic_gold: "Mythic Gold",
+  counter: "Counter",
+  level: "Level",
   other: "Other",
 };
 

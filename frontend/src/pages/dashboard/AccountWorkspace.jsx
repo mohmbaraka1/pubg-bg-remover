@@ -15,6 +15,9 @@ const CATEGORIES = [
   { key: "emotes", label: "Emotes", emoji: "🕺" },
   { key: "planes", label: "Plane Skins", emoji: "✈️" },
   { key: "boats", label: "Boat Skins", emoji: "🚤" },
+  { key: "mythic_gold", label: "Mythic Gold", emoji: "👑" },
+  { key: "counter", label: "Counter", emoji: "🔢" },
+  { key: "level", label: "Level", emoji: "🆙" },
   { key: "other", label: "Other", emoji: "📦" },
 ];
 

@@ -69,6 +69,9 @@ const IMAGE_TYPES = new Set([
   "achievement",
   "emote",
   "logo",
+  "mythic_gold",
+  "counter",
+  "level",
 ]);
 
 function BackgroundImage({ src, blur, slot }) {
@@ -102,6 +105,7 @@ function BackgroundImage({ src, blur, slot }) {
 function EmptySlot({ slot, onClick }) {
   const labelText = { character: "شخصية", weapon: "سلاح", vehicle: "مركبة", helmet: "خوذة",
     backpack: "شنطة", frame: "إطار", achievement: "إنجاز", emote: "إيموت", logo: "شعار",
+    mythic_gold: "ميثك ذهبي", counter: "عداد", level: "لفل",
     text: "نص", background: "خلفية" }[slot.type] || slot.type;
 
   return (
@@ -534,6 +538,9 @@ export default function DesignStudio() {
     helmets: "helmet",
     backpacks: "backpack",
     frames: "frame",
+    mythic_gold: "mythic_gold",
+    counter: "counter",
+    level: "level",
   };
 
   // "تصميم بالذكاء الاصطناعي": يختار المستخدم عناصر بأعداد حرة (شخصيات،

@@ -14,6 +14,9 @@ const CATEGORIES = [
   { key: "emotes", label: "إيموتس", emoji: "🕺" },
   { key: "planes", label: "طائرات", emoji: "✈️" },
   { key: "boats", label: "قوارب", emoji: "🚤" },
+  { key: "mythic_gold", label: "ميثك ذهبي", emoji: "👑" },
+  { key: "counter", label: "عداد", emoji: "🔢" },
+  { key: "level", label: "لفل", emoji: "🆙" },
   { key: "other", label: "أخرى", emoji: "📦" },
 ];
 

@@ -18,6 +18,9 @@ const CATEGORIES = [
   { key: "frames", label: "Frames", hasTypes: false },
   { key: "emotes", label: "Emotes", hasTypes: false },
   { key: "achievements", label: "Achievements", hasTypes: false },
+  { key: "mythic_gold", label: "Mythic Gold", hasTypes: false },
+  { key: "counter", label: "Counter", hasTypes: false },
+  { key: "level", label: "Level", hasTypes: false },
   { key: "other", label: "Other", hasTypes: false },
 ];
 

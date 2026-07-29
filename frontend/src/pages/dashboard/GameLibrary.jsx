@@ -14,6 +14,9 @@ const CATEGORIES = [
   { key: "frames", label: "Frames", emoji: "🖼", hasTypes: false },
   { key: "emotes", label: "Emotes", emoji: "🕺", hasTypes: false },
   { key: "achievements", label: "Achievements", emoji: "🏆", hasTypes: false },
+  { key: "mythic_gold", label: "Mythic Gold", emoji: "👑", hasTypes: false },
+  { key: "counter", label: "Counter", emoji: "🔢", hasTypes: false },
+  { key: "level", label: "Level", emoji: "🆙", hasTypes: false },
   { key: "other", label: "Other", emoji: "📦", hasTypes: false },
 ];
 

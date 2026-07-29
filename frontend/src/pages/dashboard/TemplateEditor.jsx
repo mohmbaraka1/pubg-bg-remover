@@ -18,6 +18,9 @@ const PLACEHOLDER_TYPES = [
   { key: "backpack", label: "شنطة", color: "#10b981", defaultW: 150, defaultH: 150 },
   { key: "frame", label: "إطار", color: "#ec4899", defaultW: 150, defaultH: 150 },
   { key: "logo", label: "شعار", color: "#eab308", defaultW: 200, defaultH: 200 },
+  { key: "mythic_gold", label: "ميثك ذهبي", color: "#d97706", defaultW: 150, defaultH: 150 },
+  { key: "counter", label: "عداد", color: "#14b8a6", defaultW: 110, defaultH: 110 },
+  { key: "level", label: "لفل", color: "#6366f1", defaultW: 110, defaultH: 110 },
   { key: "text", label: "نص", color: "#06b6d4", defaultW: 400, defaultH: 80 },
   { key: "background", label: "خلفية", color: "#525252", defaultW: CANVAS_WIDTH, defaultH: CANVAS_HEIGHT },
 ];
