@@ -471,17 +471,18 @@ class BackgroundRemovalPipeline:
             blocks[-1].append(segments[i])
         return blocks
 
-    def _grid_cells_from_mask(self, mask: np.ndarray) -> list[tuple]:
-        """يحوّل قناع ثنائي (لون أو تفصيل) لصناديق خلايا (x, y, w, h, block).
-        يكتشف إيقاع الصفوف مرة وحدة من القناع كامل (كل الأيقونات مع بعض تعطي
-        إشارة أوضح من مجموعة عمودية وحدها)، ثم يقسّم الأعمدة ويجمّعها
-        لمجموعات - أي مجموعة أعمدتها متفاوتة الحجم بشكل غير منطقي (شارات/نصوص
-        مختلطة، مو شبكة عناصر حقيقية) تُرفض بدل ما تُرجع صناديق غلط."""
-        row_profile = mask.sum(axis=1).astype(float)
-        row_segs = self._segments_from_absolute_gaps(row_profile, gap_frac=0.35)
-        if not row_segs:
-            return []
+    def _grid_cells_from_mask(self, mask: np.ndarray, region_bgr: np.ndarray) -> list[tuple]:
+        """يحدد أولاً مدى كل "كتلة" (مجموعة أعمدة، مثلاً كتلة الأسلحة لحالها
+        عن كتلة السيارات) من القناع (لون أو تفصيل) - هذا المستوى الخشن
+        (أين تبدأ/تنتهي كل كتلة) يبقى يعتمد على القناع لأنه غالباً كافٍ
+        لإيجاد الفجوة الحقيقية (لا محتوى إطلاقاً) بين كتلتين مختلفتين.
 
+        لكن داخل كل كتلة، تقسيم الخلايا نفسه لا يعتمد على القناع إطلاقاً
+        (جرّبنا هذا على صور حقيقية وطلع فاصل الخلايا رفيع جداً وبنفس مدى
+        لون خلفية البطاقة - فأي عتبة لونية تفشل، إما تدمج الكتلة كلها
+        بصندوق واحد أو تكتشف تفاصيل الرسمة جوا الخلية غلط) - بدل هذا نستخدم
+        _periodic_grid_cells (اكتشاف الدورية الحقيقية بالصورة الأصلية) لأنه
+        أثبت دقة عالية جداً حتى مع فاصل خافت جداً بالعين المجردة."""
         col_profile = mask.sum(axis=0).astype(float)
         col_segs = self._segments_from_absolute_gaps(col_profile, gap_frac=0.22)
         if not col_segs:
@@ -494,9 +495,10 @@ class BackgroundRemovalPipeline:
             widths = [b - a for a, b in block_segs]
             if len(widths) >= 2 and max(widths) > min(widths) * 2.2:
                 continue
-            for (ry1, ry2) in row_segs:
-                for (cx1, cx2) in block_segs:
-                    all_cells.append((cx1, ry1, cx2 - cx1, ry2 - ry1, block_idx))
+            bx1, bx2 = block_segs[0][0], block_segs[-1][1]
+            block_region = region_bgr[:, bx1:bx2]
+            for (cx, cy, cw, ch) in _periodic_grid_cells(block_region):
+                all_cells.append((bx1 + cx, cy, cw, ch, block_idx))
 
         all_cells.sort(key=lambda b: (b[4], round(b[1] / 40), b[0]))
         return all_cells
@@ -504,20 +506,19 @@ class BackgroundRemovalPipeline:
     def _detect_grid_cell_boxes(self, region_bgr: np.ndarray) -> list[tuple]:
         """يرجّع صناديق (x, y, w, h, block_index) نسبية للمنطقة المعطاة.
 
-        يجرّب قناع اللون أولاً (أدق عادة)، ولو رجّع خلايا قليلة جداً (يدل على
-        فشله - غالباً لأن خلفية الصورة نفسها بنفس مدى لون البطاقات) يجرّب
-        قناع التفصيل (texture) كبديل ويأخذ الأفضل بينهما. ولا واحد فيهم مثالي
-        لكل الخلفيات، لكن التبديل التلقائي بينهما يغطي حالات أكثر بكثير من
-        الاعتماد على واحد بس."""
+        يجرّب قناع اللون أولاً (أدق عادة لإيجاد مدى الكتل) لو رجّع خلايا
+        قليلة جداً (يدل على فشله - غالباً لأن خلفية الصورة نفسها بنفس مدى
+        لون البطاقات) يجرّب قناع التفصيل (texture) كبديل ويأخذ الأفضل
+        بينهما."""
         rh, rw = region_bgr.shape[:2]
         if rh < 20 or rw < 20:
             return []
 
-        color_cells = self._grid_cells_from_mask(self._panel_color_mask(region_bgr))
+        color_cells = self._grid_cells_from_mask(self._panel_color_mask(region_bgr), region_bgr)
         if len(color_cells) >= 6:
             return color_cells
 
-        texture_cells = self._grid_cells_from_mask(self._panel_texture_mask(region_bgr))
+        texture_cells = self._grid_cells_from_mask(self._panel_texture_mask(region_bgr), region_bgr)
         return texture_cells if len(texture_cells) > len(color_cells) else color_cells
 
     def detect_full_template_layout(self, image_bytes: bytes) -> dict:
@@ -993,9 +994,111 @@ pipeline = BackgroundRemovalPipeline()
 
 # ============================================================
 # اكتشاف شبكة عناصر (Grid) داخل منطقة محددة من صورة، وقصّها بدقة
-# على حدود كل بطاقة الفعلية (بالاعتماد على التشبّع اللوني: بطاقات
-# اللعبة عادة ملوّنة بتدرّج بينما الفجوات بينها رمادية/داكنة محايدة)
+# على حدود كل خلية فعلياً.
+#
+# لماذا لا نعتمد على التشبّع اللوني/عتبة مطلقة (الطريقة القديمة أدناه):
+# جربنا ذلك على صور حقيقية وطلع الفاصل بين خليتين متجاورتين غالباً خط
+# رفيع جداً (2-4 بكسل) وغامق قليلاً بس مو مختلف اللون عن خلفية البطاقة
+# نفسها - فأي عتبة لونية (نسبية أو مطلقة) إما ما تكتشف الفاصل إطلاقاً
+# (فتدمج كل الشبكة بصندوق واحد) أو تكتشف تفاصيل الرسمة جوا الخلية خطأ
+# كأنها فواصل. الحل الأوثق: هذي الشبكات دورية تماماً (كل الخلايا نفس
+# الحجم بالضبط) - فبدل ما نبحث عن "فجوة"، نكتشف الدورية (pitch) نفسها
+# عبر autocorrelation على بروفايل شدة الرمادي (عمود/صف)، ثم نلاقي الطور
+# (phase) اللي يقلّل متوسط الشدة عند مواضع الفواصل المتوقعة (لأن الفاصل
+# نفسه أغمق قليلاً من متوسط الخلية) - هاد بيعطي حدود دقيقة جداً حتى لو
+# التباين ضعيف جداً بالعين المجردة.
 # ============================================================
+def _pitch_and_phase(
+    profile: np.ndarray, min_period: int, max_period: int
+) -> tuple[int, int, int] | None:
+    """يرجّع (period, phase, count) لبروفايل 1D فيه شبكة دورية من فواصل
+    خافتة (قيمة أقل من المحيط) عند المواضع phase + k*period.
+
+    الخطوة 1: autocorrelation يكتشف "طول الدورة" (period) نفسه - هذا مؤشر
+    أقوى بكثير من أي عتبة لأنه يجمع الإشارة من كل تكرارات الشبكة مع بعض.
+    الخطوة 2: بما إن الدورة معروفة، نبحث فقط عن "أفضل طور" (phase من 0
+    لـ period-1) اللي يخلي متوسط شدة الرمادي عند كل مواضع الفواصل المتوقعة
+    أقل ما يمكن - وهو نفسه موضع الفواصل الحقيقي (أغمق من داخل الخلية).
+    """
+    n = len(profile)
+    centered = profile - profile.mean()
+    if centered.std() < 1e-6:
+        return None
+    ac = np.correlate(centered, centered, mode="full")
+    ac = ac[len(ac) // 2:]
+    if ac[0] <= 0:
+        return None
+    ac = ac / ac[0]
+    hi = min(max_period, len(ac) - 1)
+    if hi <= min_period:
+        return None
+    search = ac[min_period:hi]
+    best_idx = int(np.argmax(search))
+    period = best_idx + min_period
+
+    # ثقة ضعيفة بالدورية المكتشفة (لا يوجد نمط متكرر حقيقي، غالباً منطقة
+    # مختلطة فيها أكثر من شبكة بحجم خلية مختلف، أو مساحة بلا شبكة إطلاقاً)
+    # - أرفض بدل ما أرجّع عدد خلايا وهمي/سخيف (رأينا هذا فعلياً: مئات
+    # الخلايا المزيّفة لما الدورية المكتشفة كانت ضجيج بحت).
+    if search[best_idx] < 0.3:
+        return None
+
+    count = round(n / period)
+    if count < 2 or count > 20:
+        return None
+
+    best_phase, best_score = 0, None
+    for phase in range(period):
+        positions = [phase + k * period for k in range(count + 1)]
+        positions = [p for p in positions if 0 <= p < n]
+        if len(positions) < 2:
+            continue
+        score = float(np.mean([profile[p] for p in positions]))
+        if best_score is None or score < best_score:
+            best_score, best_phase = score, phase
+    return period, best_phase, count
+
+
+def _periodic_grid_cells(
+    region_bgr: np.ndarray, min_period: int = 20
+) -> list[tuple[int, int, int, int]]:
+    """يكتشف صناديق (x, y, w, h) لخلايا شبكة منتظمة داخل region_bgr، عبر
+    إيجاد الدورية بمحوري الصفوف والأعمدة كل على حدة (انظر _pitch_and_phase).
+    يفترض أن المنطقة المعطاة تحتوي فعلاً شبكة واحدة منتظمة (نفس حجم الخلية
+    بالكامل) - أي تُطبَّق على منطقة محددة يدوياً حول شبكة وحدة، وليس على
+    صورة كاملة فيها أكثر من شبكة بأحجام خلايا مختلفة."""
+    h, w = region_bgr.shape[:2]
+    if h < 20 or w < 20:
+        return []
+
+    gray = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    col_profile = gray.mean(axis=0)
+    row_profile = gray.mean(axis=1)
+
+    col_res = _pitch_and_phase(col_profile, min_period, max(min_period + 1, w // 2))
+    row_res = _pitch_and_phase(row_profile, min_period, max(min_period + 1, h // 2))
+    if col_res is None or row_res is None:
+        return []
+
+    cperiod, cphase, ccount = col_res
+    rperiod, rphase, rcount = row_res
+
+    col_bounds = sorted(set(
+        [0, w] + [cphase + k * cperiod for k in range(ccount + 1) if 0 < cphase + k * cperiod < w]
+    ))
+    row_bounds = sorted(set(
+        [0, h] + [rphase + k * rperiod for k in range(rcount + 1) if 0 < rphase + k * rperiod < h]
+    ))
+
+    cells: list[tuple[int, int, int, int]] = []
+    for ri in range(len(row_bounds) - 1):
+        for ci in range(len(col_bounds) - 1):
+            x1, x2 = col_bounds[ci], col_bounds[ci + 1]
+            y1, y2 = row_bounds[ri], row_bounds[ri + 1]
+            cells.append((x1, y1, x2 - x1, y2 - y1))
+    return cells
+
+
 def _find_segments(profile: np.ndarray, threshold: float, min_len: int) -> list[tuple[int, int]]:
     above = profile > threshold
     segments: list[tuple[int, int]] = []
@@ -1021,8 +1124,10 @@ def slice_grid(
     saturation_threshold: float = 70.0,
 ) -> list[dict]:
     """
-    يقص منطقة (rect) من الصورة الأصلية، ويكتشف تلقائياً حدود كل "بطاقة"
-    داخلها بالاعتماد على التشبّع اللوني، ويرجّع كل خلية كـ PNG مستقل.
+    يقص منطقة (rect) من الصورة الأصلية، ويكتشف تلقائياً حدود كل خلية
+    داخلها عبر الدورية (انظر _periodic_grid_cells أعلاه)، ويرجّع كل خلية
+    كـ PNG مستقل. (saturation_threshold أصبحت غير مستخدَمة - أُبقيت
+    بالتوقيع فقط للتوافق مع نداءات main.py القائمة.)
     """
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     full = np.array(image)
@@ -1035,27 +1140,24 @@ def slice_grid(
     y2 = min(h, rect_y + rect_h)
     region = full_bgr[y1:y2, x1:x2]
 
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1].astype(float)
+    boxes = _periodic_grid_cells(region)
+    boxes.sort(key=lambda b: (b[1], b[0]))
 
-    col_sat = sat.mean(axis=0)
-    row_sat = sat.mean(axis=1)
-
-    min_len_col = max(10, region.shape[1] // 20)
-    min_len_row = max(10, region.shape[0] // 20)
-
-    col_segments = _find_segments(col_sat, saturation_threshold, min_len_col)
-    row_segments = _find_segments(row_sat, saturation_threshold, min_len_row)
+    # نبني الصفوف/الأعمدة من نفس صناديق الشبكة المكتشفة (بدل ما نعيد
+    # اكتشافها من الصفر) عشان ترقيم row/col يطابق فعلياً مواضع الصناديق.
+    row_ys = sorted(set(b[1] for b in boxes))
+    col_xs = sorted(set(b[0] for b in boxes))
 
     cells = []
-    for ri, (ry1, ry2) in enumerate(row_segments):
-        for ci, (cx1, cx2) in enumerate(col_segments):
-            cell_bgr = region[ry1:ry2, cx1:cx2]
-            cell_rgb = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2RGB)
-            cell_img = Image.fromarray(cell_rgb)
-            buf = io.BytesIO()
-            cell_img.save(buf, format="PNG")
-            cells.append({"row": ri, "col": ci, "png_bytes": buf.getvalue()})
+    for (cx1, cy1, cw, ch) in boxes:
+        ri = row_ys.index(cy1)
+        ci = col_xs.index(cx1)
+        cell_bgr = region[cy1:cy1 + ch, cx1:cx1 + cw]
+        cell_rgb = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2RGB)
+        cell_img = Image.fromarray(cell_rgb)
+        buf = io.BytesIO()
+        cell_img.save(buf, format="PNG")
+        cells.append({"row": ri, "col": ci, "png_bytes": buf.getvalue()})
 
     return cells
 
