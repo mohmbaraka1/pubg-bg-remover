@@ -102,11 +102,35 @@ function BackgroundImage({ src, blur, slot }) {
   );
 }
 
+// كل نوع خانة إله أيقونة تعبيرية مميزة + شكل حواف مختلف (شارة دائرية، إطار
+// حاد الزوايا...) - عشان الخانة الفاضية توحي بشكل العنصر الحقيقي من أول
+// وهلة بدل مربع لون موحّد لكل الأنواع (كانت كلها متشابهة شكلاً بغض النظر
+// عن نوع العنصر). لسا خانة فاضية وقابلة للضغط لاستدعاء منتقي الصور - الشكل
+// الحقيقي 100% بيجي بعد ما يختار المستخدم الصورة (ImageLayer).
+const TYPE_EMOJI = {
+  character: "🧍", weapon: "🔫", vehicle: "🚗", helmet: "⛑",
+  backpack: "🎒", frame: "🖼", achievement: "🏆", emote: "🕺",
+  logo: "⭐", mythic_gold: "👑", counter: "🔢", level: "🆙", other: "📦",
+};
+
+// شارات/عدادات مربعة صغيرة تُعامل كـ"شارة دائرية الشكل"، الإطار حاد الزوايا
+// (يشبه إطار صورة حقيقي)، والباقي متوسط الاستدارة كالمعتاد.
+const TYPE_CORNER_RADIUS = (slot) => {
+  if (slot.type === "frame") return 4;
+  if (["achievement", "mythic_gold", "counter", "level"].includes(slot.type)) {
+    return Math.min(slot.width, slot.height) / 2;
+  }
+  return 14;
+};
+
 function EmptySlot({ slot, onClick }) {
   const labelText = { character: "شخصية", weapon: "سلاح", vehicle: "مركبة", helmet: "خوذة",
     backpack: "شنطة", frame: "إطار", achievement: "إنجاز", emote: "إيموت", logo: "شعار",
     mythic_gold: "ميثك ذهبي", counter: "عداد", level: "لفل",
     text: "نص", background: "خلفية" }[slot.type] || slot.type;
+  const emoji = TYPE_EMOJI[slot.type] || "📦";
+  const cornerRadius = TYPE_CORNER_RADIUS(slot);
+  const emojiSize = Math.min(slot.width, slot.height) * 0.45;
 
   return (
     <>
@@ -118,28 +142,40 @@ function EmptySlot({ slot, onClick }) {
         fill="rgba(245, 158, 11, 0.06)"
         stroke="rgba(245, 158, 11, 0.35)"
         strokeWidth={1.5}
-        cornerRadius={14}
+        cornerRadius={cornerRadius}
         onClick={onClick}
         onTap={onClick}
       />
+      <Text
+        x={slot.x}
+        y={slot.y + slot.height / 2 - emojiSize / 2 - 14}
+        width={slot.width}
+        align="center"
+        text={emoji}
+        fontSize={emojiSize}
+        opacity={0.5}
+        onClick={onClick}
+        onTap={onClick}
+        listening
+      />
       <Rect
-        x={slot.x + slot.width / 2 - 22}
-        y={slot.y + slot.height / 2 - 22}
-        width={44}
-        height={44}
-        fill="rgba(245, 158, 11, 0.15)"
-        cornerRadius={22}
+        x={slot.x + slot.width / 2 - 20}
+        y={slot.y + slot.height / 2 + emojiSize / 2 - 14}
+        width={40}
+        height={40}
+        fill="rgba(245, 158, 11, 0.2)"
+        cornerRadius={20}
         onClick={onClick}
         onTap={onClick}
         listening
       />
       <Text
-        x={slot.x + slot.width / 2 - 22}
-        y={slot.y + slot.height / 2 - 15}
-        width={44}
+        x={slot.x + slot.width / 2 - 20}
+        y={slot.y + slot.height / 2 + emojiSize / 2 - 27}
+        width={40}
         align="center"
         text="+"
-        fontSize={26}
+        fontSize={24}
         fontStyle="bold"
         fill="#f59e0b"
         onClick={onClick}
@@ -148,7 +184,7 @@ function EmptySlot({ slot, onClick }) {
       />
       <Text
         x={slot.x}
-        y={slot.y + slot.height / 2 + 26}
+        y={slot.y + slot.height / 2 + emojiSize / 2 + 20}
         width={slot.width}
         align="center"
         text={labelText}
