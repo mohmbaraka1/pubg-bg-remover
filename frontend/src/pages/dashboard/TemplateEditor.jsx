@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Stage, Layer, Rect, Text, Transformer } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Rect, Text, Transformer } from "react-konva";
+import useImage from "use-image";
 import { supabase } from "../../lib/supabase";
 import { apiUrl } from "../../lib/api";
 import AssetPickerModal from "../../components/AssetPickerModal";
@@ -31,6 +32,7 @@ function PlaceholderBox({ shape, isSelected, onSelect, onChange }) {
   const shapeRef = useRef();
   const trRef = useRef();
   const info = typeInfo(shape.type);
+  const [img] = useImage(shape.default_image_url || null, "anonymous");
 
   useEffect(() => {
     if (isSelected && trRef.current && shapeRef.current) {
@@ -41,6 +43,11 @@ function PlaceholderBox({ shape, isSelected, onSelect, onChange }) {
 
   return (
     <>
+      {/* لما فيه صورة حقيقية معيّنة (default_image_url) نعرضها بشكلها الفعلي
+          (بدل مربع لون مسطّح) - هيك تسحب/تحجّم شكل العنصر الحقيقي (إطار
+          مفرغ، شارة، عداد...) مباشرة فوق الصورة المرجعية بدل ما تخمّن أبعاده
+          من مربع عام. الصورة نفسها غير تفاعلية (listening=false)، السحب
+          والتحجيم يضلوا على الـ Rect اللي تحتها بالضبط. */}
       <Rect
         ref={shapeRef}
         x={shape.x}
@@ -48,14 +55,26 @@ function PlaceholderBox({ shape, isSelected, onSelect, onChange }) {
         width={shape.width}
         height={shape.height}
         rotation={shape.rotation || 0}
-        fill={info.color}
-        opacity={0.35}
+        fill={img ? "transparent" : info.color}
+        opacity={img ? 1 : 0.35}
         stroke={info.color}
         strokeWidth={2}
         draggable
         onClick={onSelect}
         onTap={onSelect}
+        onDragMove={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
         onDragEnd={(e) => onChange({ ...shape, x: e.target.x(), y: e.target.y() })}
+        onTransform={() => {
+          const node = shapeRef.current;
+          onChange({
+            ...shape,
+            x: node.x(),
+            y: node.y(),
+            width: Math.max(20, node.width() * node.scaleX()),
+            height: Math.max(20, node.height() * node.scaleY()),
+            rotation: node.rotation(),
+          });
+        }}
         onTransformEnd={() => {
           const node = shapeRef.current;
           const scaleX = node.scaleX();
@@ -72,14 +91,28 @@ function PlaceholderBox({ shape, isSelected, onSelect, onChange }) {
           });
         }}
       />
+      {img && (
+        <KonvaImage
+          image={img}
+          x={shape.x}
+          y={shape.y}
+          width={shape.width}
+          height={shape.height}
+          rotation={shape.rotation || 0}
+          opacity={0.9}
+          listening={false}
+        />
+      )}
       <Text
         x={shape.x}
         y={shape.y + 6}
         width={shape.width}
         align="center"
-        text={`${info.label}\n${shape.id}${shape.default_image_url ? "\n🖼 معبّى" : ""}`}
+        text={`${info.label}\n${shape.id}`}
         fontSize={14}
-        fill="#ffffff"
+        fill={img ? "#000000" : "#ffffff"}
+        shadowColor="#ffffff"
+        shadowBlur={img ? 4 : 0}
         listening={false}
       />
       {isSelected && <Transformer ref={trRef} rotateEnabled />}
