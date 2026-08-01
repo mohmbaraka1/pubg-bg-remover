@@ -146,6 +146,21 @@ function countsFromPlaceholders(list) {
   return counts;
 }
 
+// مسوّدة تحرير واحدة محفوظة محلياً (localStorage) - عشان لو المستخدم طلع
+// لصفحة ثانية بالغلط بنص التعديل (بدون ما يضغط "حفظ")، شغله ما يضيع.
+// نخزّن هون بدل قاعدة البيانات لأنها حالة تحرير مؤقتة بحتة، مو بيانات نهائية.
+const DRAFT_KEY = "template_editor_draft_v1";
+
+const readDraft = () => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+const clearDraft = () => localStorage.removeItem(DRAFT_KEY);
+
 export default function TemplateEditor() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [templates, setTemplates] = useState([]);
@@ -156,6 +171,8 @@ export default function TemplateEditor() {
   const [templateStyleTags, setTemplateStyleTags] = useState("");
   const [placeholders, setPlaceholders] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [pendingDraft, setPendingDraft] = useState(() => readDraft());
+  const draftSaveTimer = useRef();
   const [defaultImagePickerOpen, setDefaultImagePickerOpen] = useState(null); // "asset" | "background" | null
   const [addType, setAddType] = useState("character");
   const [autoCharCount, setAutoCharCount] = useState(9);
@@ -195,6 +212,39 @@ export default function TemplateEditor() {
     return () => window.removeEventListener("resize", updateScale);
   }, [editingId]);
 
+  // حفظ تلقائي (محلي فقط) كل ما تغيّر أي شي بوضع التحرير - مؤخّر نصف ثانية
+  // عشان ما يكتب لـ localStorage عشرات المرات بالثانية وقت السحب المستمر.
+  useEffect(() => {
+    if (!editingId) return;
+    clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      localStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify({
+          editingId,
+          templateName,
+          templateCategory,
+          templateStyleTags,
+          placeholders,
+          savedAt: Date.now(),
+        })
+      );
+    }, 500);
+    return () => clearTimeout(draftSaveTimer.current);
+  }, [editingId, templateName, templateCategory, templateStyleTags, placeholders]);
+
+  // تحذير المتصفح لو سكّر التاب أو عمل Refresh بنص التعديل (المسوّدة محفوظة
+  // أصلاً محلياً وقتها، بس هيك بيعرف فوراً إنه في شغل غير محفوظ بدل ما يفاجأ).
+  useEffect(() => {
+    if (!editingId) return;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editingId]);
+
   const startNewTemplate = () => {
     setEditingId("new");
     setTemplateName("");
@@ -202,6 +252,25 @@ export default function TemplateEditor() {
     setTemplateStyleTags("");
     setPlaceholders([]);
     setSelectedId(null);
+  };
+
+  // المسوّدة المحفوظة محلياً قد تشاور على تيمبلت "new" (ما انحفظ إطلاقاً)
+  // أو تيمبلت موجود (id حقيقي) كان قيد التعديل - بالحالتين نرجّع بالضبط
+  // نفس حالة التحرير يلي كانت موجودة وقت الانقطاع.
+  const resumeDraft = () => {
+    if (!pendingDraft) return;
+    setEditingId(pendingDraft.editingId);
+    setTemplateName(pendingDraft.templateName || "");
+    setTemplateCategory(pendingDraft.templateCategory || "");
+    setTemplateStyleTags(pendingDraft.templateStyleTags || "");
+    setPlaceholders(pendingDraft.placeholders || []);
+    setSelectedId(null);
+    setPendingDraft(null);
+  };
+
+  const discardDraft = () => {
+    clearDraft();
+    setPendingDraft(null);
   };
 
   const startEditTemplate = (tpl) => {
@@ -219,6 +288,8 @@ export default function TemplateEditor() {
   };
 
   const cancelEdit = () => {
+    if (placeholders.length > 0 && !confirm("رح تلغي التعديلات الحالية بدون حفظ. متأكد؟")) return;
+    clearDraft();
     setEditingId(null);
     setPlaceholders([]);
     setSelectedId(null);
@@ -513,6 +584,7 @@ export default function TemplateEditor() {
       .map((t) => t.trim())
       .filter(Boolean);
 
+    let saveError = null;
     if (editingId === "new") {
       const { error } = await supabase.from("design_templates").insert({
         name: templateName.trim(),
@@ -523,7 +595,7 @@ export default function TemplateEditor() {
         style_tags: styleTags,
         ...counts,
       });
-      if (error) alert(`فشل الحفظ: ${error.message}`);
+      saveError = error;
     } else {
       const { error } = await supabase
         .from("design_templates")
@@ -535,10 +607,16 @@ export default function TemplateEditor() {
           ...counts,
         })
         .eq("id", editingId);
-      if (error) alert(`فشل الحفظ: ${error.message}`);
+      saveError = error;
     }
 
     setSaving(false);
+    if (saveError) {
+      alert(`فشل الحفظ: ${saveError.message}\n\nشغلك محفوظ محلياً كمسوّدة، جرب تحفظ تاني.`);
+      return; // نبقي المسوّدة والـ editingId - ما نخسر الشغل لو فشل الحفظ
+    }
+
+    clearDraft(); // انحفظ فعلياً بقاعدة البيانات - ما في داعي للمسوّدة المحلية بعد هلق
     setEditingId(null);
     fetchTemplates();
   };
@@ -573,6 +651,35 @@ export default function TemplateEditor() {
             + تيمبلت جديد
           </button>
         </div>
+
+        {pendingDraft && (
+          <div className="bg-amber-500/10 border border-amber-500/40 rounded-2xl p-4 mb-6 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-amber-400 font-semibold text-sm">
+                📝 عندك مسوّدة تعديل غير محفوظة
+                {pendingDraft.templateName ? ` — "${pendingDraft.templateName}"` : ""}
+              </p>
+              <p className="text-neutral-500 text-xs mt-1">
+                {(pendingDraft.placeholders || []).length} عنصر · آخر تعديل{" "}
+                {new Date(pendingDraft.savedAt).toLocaleString("ar")}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={resumeDraft}
+                className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+              >
+                ▶️ كمّل عليها
+              </button>
+              <button
+                onClick={discardDraft}
+                className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-4 py-2 rounded-xl text-sm transition-colors"
+              >
+                🗑️ تجاهلها
+              </button>
+            </div>
+          </div>
+        )}
 
         {loadingList ? (
           <p className="text-neutral-500 text-sm">جارِ التحميل...</p>
