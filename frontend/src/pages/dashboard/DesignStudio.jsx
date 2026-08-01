@@ -921,6 +921,14 @@ export default function DesignStudio() {
     document.body.appendChild(a);
     a.click();
     a.remove();
+
+    // شعبية التيمبلت (usage_count) - أساس ترتيب التيمبلتات تلقائياً لاحقاً
+    // حسب الاستخدام الفعلي بدل رأي شخصي. ما نوقف/ننبّه لو فشلت (مش حرجة).
+    if (activeTemplate?.id) {
+      supabase.rpc("increment_template_usage", { tpl_id: activeTemplate.id }).then(({ error }) => {
+        if (error) console.error("فشل تحديث usage_count:", error);
+      });
+    }
   };
 
   // يحوّل التصميم الحالي (بكل الشخصيات/الأسلحة اللي عبّيتها) إلى تيمبلت

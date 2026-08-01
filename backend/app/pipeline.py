@@ -572,6 +572,37 @@ class BackgroundRemovalPipeline:
             "bottom_cells": bottom_cells,
         }
 
+    def extract_salient_cutout(
+        self, image_bytes: bytes, rect_x: int, rect_y: int, rect_w: int, rect_h: int
+    ) -> bytes:
+        """
+        يقص منطقة محددة يدوياً (رسمة إطار مفرغ، شعار/هاشتاق نصي...) ويفرغها
+        من خلفيتها الفوتوغرافية عبر BiRefNet وحده (بدون YOLO/SAM2 - هذول
+        مبنيين خصيصاً لأجسام بشرية متماسكة، وBiRefNet نموذج "بروز عام" عام
+        (salient object) يشتغل منطقياً على أي عنصر بارز بغض النظر عن نوعه).
+        مناسب بالذات للعناصر اللي مرسومة مباشرة فوق خلفية الصورة (بلا بطاقة
+        لون خاصة فيها) زي الإطارات والنصوص - عكس شارات/أيقونات الأسلحة
+        اللي أصلاً إلها خلفية بطاقة ثابتة (قص عادي كافي إلها، بدون تفريغ).
+        """
+        self._load_birefnet()
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        full = np.array(image)
+        h, w = full.shape[:2]
+        x1 = max(0, rect_x)
+        y1 = max(0, rect_y)
+        x2 = min(w, rect_x + rect_w)
+        y2 = min(h, rect_y + rect_h)
+        crop = full[y1:y2, x1:x2]
+
+        crop_pil = Image.fromarray(crop)
+        alpha = self._matte_with_birefnet(crop_pil)
+
+        rgba = np.dstack([crop, alpha])
+        out_img = Image.fromarray(rgba, mode="RGBA")
+        buf = io.BytesIO()
+        out_img.save(buf, format="PNG")
+        return buf.getvalue()
+
     def detect_people_boxes(self, image_bytes: bytes) -> dict:
         """
         يكتشف صناديق كل الأشخاص بالصورة بالذكاء الاصطناعي (YOLO) فقط - بدون

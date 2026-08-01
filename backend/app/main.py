@@ -249,3 +249,28 @@ async def grid_slice(
             for c in cells
         ]
     }
+
+
+@app.post("/api/extract-cutout")
+async def extract_cutout(
+    file: UploadFile = File(...),
+    rect_x: int = Form(...),
+    rect_y: int = Form(...),
+    rect_w: int = Form(...),
+    rect_h: int = Form(...),
+):
+    """
+    يقص منطقة محددة يدوياً (إطار، شعار/هاشتاق...) ويفرغها من خلفيتها
+    الفوتوغرافية بـ BiRefNet لوحده (بدون YOLO/SAM2 - انظر توثيق
+    extract_salient_cutout بـ pipeline.py). مناسب للعناصر المرسومة مباشرة
+    فوق خلفية الصورة، لا لأيقونات لها بطاقة لون خاصة (تلك تُقص عادي فقط،
+    استخدم /api/grid-slice).
+    """
+    raw = await file.read()
+    try:
+        png_bytes = pipeline.extract_salient_cutout(raw, rect_x, rect_y, rect_w, rect_h)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Salient cutout extraction failed")
+        raise HTTPException(status_code=500, detail=f"فشل تفريغ العنصر: {exc}") from exc
+
+    return Response(content=png_bytes, media_type="image/png")

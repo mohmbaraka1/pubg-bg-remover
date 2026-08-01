@@ -120,12 +120,40 @@ function PlaceholderBox({ shape, isSelected, onSelect, onChange }) {
   );
 }
 
+// فئات جاهزة لتصنيف التيمبلت (Step 5 بخطة محرك التيمبلتات الذكي) - نص حر
+// كمان مسموح (select بخيار "أخرى") عشان ما نكون مقيّدين بلائحة ثابتة.
+const CATEGORY_OPTIONS = [
+  "Royal Pass", "Conqueror", "Vehicle Showcase", "Weapon Showcase",
+  "X-Suit Showcase", "Luxury", "Dark", "Gold", "Neon", "Minimal", "Epic",
+];
+
+// يحسب عدّادات كل نوع عنصر مباشرة من قائمة placeholders الفعلية - مصدر
+// الحقيقة الوحيد هو التيمبلت نفسه، ما في داعي المستخدم يدخلها يدوياً
+// ويصير ممكن تتعارض مع المحتوى الفعلي.
+function countsFromPlaceholders(list) {
+  const counts = {
+    char_count: 0, weapon_count: 0, vehicle_count: 0,
+    helmet_count: 0, backpack_count: 0, frame_count: 0,
+  };
+  const keyByType = {
+    character: "char_count", weapon: "weapon_count", vehicle: "vehicle_count",
+    helmet: "helmet_count", backpack: "backpack_count", frame: "frame_count",
+  };
+  list.forEach((p) => {
+    const key = keyByType[p.type];
+    if (key) counts[key] += 1;
+  });
+  return counts;
+}
+
 export default function TemplateEditor() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [editingId, setEditingId] = useState(null); // null = مو بوضع تحرير
   const [templateName, setTemplateName] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("");
+  const [templateStyleTags, setTemplateStyleTags] = useState("");
   const [placeholders, setPlaceholders] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [defaultImagePickerOpen, setDefaultImagePickerOpen] = useState(null); // "asset" | "background" | null
@@ -170,6 +198,8 @@ export default function TemplateEditor() {
   const startNewTemplate = () => {
     setEditingId("new");
     setTemplateName("");
+    setTemplateCategory("");
+    setTemplateStyleTags("");
     setPlaceholders([]);
     setSelectedId(null);
   };
@@ -177,6 +207,8 @@ export default function TemplateEditor() {
   const startEditTemplate = (tpl) => {
     setEditingId(tpl.id);
     setTemplateName(tpl.name);
+    setTemplateCategory(tpl.category || "");
+    setTemplateStyleTags((tpl.style_tags || []).join(", "));
     setPlaceholders(
       (tpl.placeholders || []).map((p, i) => ({
         ...p,
@@ -475,6 +507,11 @@ export default function TemplateEditor() {
       ...rest,
       z_index: index,
     }));
+    const counts = countsFromPlaceholders(cleanPlaceholders);
+    const styleTags = templateStyleTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
 
     if (editingId === "new") {
       const { error } = await supabase.from("design_templates").insert({
@@ -482,12 +519,21 @@ export default function TemplateEditor() {
         canvas_width: CANVAS_WIDTH,
         canvas_height: CANVAS_HEIGHT,
         placeholders: cleanPlaceholders,
+        category: templateCategory || null,
+        style_tags: styleTags,
+        ...counts,
       });
       if (error) alert(`فشل الحفظ: ${error.message}`);
     } else {
       const { error } = await supabase
         .from("design_templates")
-        .update({ name: templateName.trim(), placeholders: cleanPlaceholders })
+        .update({
+          name: templateName.trim(),
+          placeholders: cleanPlaceholders,
+          category: templateCategory || null,
+          style_tags: styleTags,
+          ...counts,
+        })
         .eq("id", editingId);
       if (error) alert(`فشل الحفظ: ${error.message}`);
     }
@@ -535,8 +581,19 @@ export default function TemplateEditor() {
             {templates.map((tpl) => (
               <div key={tpl.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4">
                 <h3 className="font-semibold mb-1">{tpl.name}</h3>
-                <p className="text-neutral-500 text-xs mb-3">
+                <p className="text-neutral-500 text-xs mb-1">
                   {(tpl.placeholders || []).length} عنصر · {tpl.canvas_width}×{tpl.canvas_height}
+                </p>
+                {(tpl.category || (tpl.style_tags || []).length > 0) && (
+                  <p className="text-amber-500/80 text-xs mb-1">
+                    {tpl.category}
+                    {tpl.category && (tpl.style_tags || []).length > 0 && " · "}
+                    {(tpl.style_tags || []).join(", ")}
+                  </p>
+                )}
+                <p className="text-neutral-600 text-xs mb-3">
+                  🧍{tpl.char_count ?? 0} 🔫{tpl.weapon_count ?? 0} 🚗{tpl.vehicle_count ?? 0}
+                  {" · "}استُخدم {tpl.usage_count ?? 0} مرة
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -570,6 +627,25 @@ export default function TemplateEditor() {
           value={templateName}
           onChange={(e) => setTemplateName(e.target.value)}
           className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-neutral-100 outline-none focus:border-amber-500"
+        />
+        <input
+          list="template-categories"
+          placeholder="الفئة (Royal Pass, Luxury...)"
+          value={templateCategory}
+          onChange={(e) => setTemplateCategory(e.target.value)}
+          className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-neutral-100 outline-none focus:border-amber-500 w-56"
+        />
+        <datalist id="template-categories">
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+        <input
+          type="text"
+          placeholder="وسوم ستايل (مفصولة بفاصلة): Gold, Dark"
+          value={templateStyleTags}
+          onChange={(e) => setTemplateStyleTags(e.target.value)}
+          className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-neutral-100 outline-none focus:border-amber-500 w-64"
         />
         <div className="flex gap-2">
           <button
