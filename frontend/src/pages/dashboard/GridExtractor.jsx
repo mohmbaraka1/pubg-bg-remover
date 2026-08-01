@@ -7,6 +7,7 @@ import { apiUrl } from "../../lib/api";
 const ADMIN_EMAIL = "mohammedbaraka842@gmail.com";
 const DISPLAY_MAX_WIDTH = 900;
 const GRID_SLICE_API = apiUrl("/api/grid-slice");
+const EXTRACT_CUTOUT_API = apiUrl("/api/extract-cutout");
 
 const CATEGORIES = [
   { key: "weapons", label: "Weapons", hasTypes: true },
@@ -177,6 +178,29 @@ export default function GridExtractor() {
         formData.append("rect_y", realY);
         formData.append("rect_w", realW);
         formData.append("rect_h", realH);
+
+        if (detectionMethod === "cutout") {
+          // كل مستطيل هون = عنصر واحد كامل (إطار/هاشتاق) يُفرَّغ من خلفيته
+          // بالكامل (BiRefNet) - مش شبكة تُقص لخلايا فرعية زي باقي الأوضاع.
+          // eslint-disable-next-line no-await-in-loop
+          const res = await fetch(EXTRACT_CUTOUT_API, { method: "POST", body: formData });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(`المستطيل ${i + 1}: ${body.detail || `فشل الطلب (HTTP ${res.status})`}`);
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const data = await res.json();
+          allCells.push({
+            id: `region${i}_cutout_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl: `data:image/png;base64,${data.image_base64}`,
+            name: "",
+            category: "frames",
+            typeId: "",
+            include: true,
+          });
+          continue;
+        }
+
         formData.append("saturation_threshold", threshold);
         formData.append("method", detectionMethod);
 
@@ -340,6 +364,7 @@ export default function GridExtractor() {
               >
                 <option value="projection">تحليل خطي (الافتراضية)</option>
                 <option value="color">ألوان الإطارات (تجريبية)</option>
+                <option value="cutout">✂️ تفريغ عنصر مفرد (إطار/هاشتاق)</option>
               </select>
             </div>
             <div>
@@ -351,7 +376,7 @@ export default function GridExtractor() {
                 value={threshold}
                 onChange={(e) => setThreshold(Number(e.target.value))}
                 className="w-32"
-                disabled={detectionMethod === "color"}
+                disabled={detectionMethod !== "projection"}
               />
               <span className="text-neutral-500 text-xs ml-2">{threshold}</span>
             </div>
@@ -392,6 +417,13 @@ export default function GridExtractor() {
             💡 كل مستطيل بلون مختلف. اضغط "+ إضافة مستطيل" لكل صف عناصر (أسلحة، سيارات، إطارات...)،
             حرّكهم وحجّمهم فوق كل صف، وبعدها اضغط "قص كل المستطيلات" مرة وحدة بس.
           </p>
+          {detectionMethod === "cutout" && (
+            <p className="text-purple-400 text-xs mb-3">
+              ✂️ بوضع "تفريغ عنصر مفرد": كل مستطيل = عنصر واحد بس (إطار وحد أو هاشتاق وحد) وبيتفرّغ
+              بالكامل من خلفيته الفوتوغرافية. لو عندك أكتر من إطار بالصورة، ضيف مستطيل منفصل لكل وحد
+              (مو مستطيل واحد يلفّهم كلهم).
+            </p>
+          )}
 
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 overflow-auto">
             <Stage

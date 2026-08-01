@@ -273,4 +273,4 @@ async def extract_cutout(
         logger.exception("Salient cutout extraction failed")
         raise HTTPException(status_code=500, detail=f"فشل تفريغ العنصر: {exc}") from exc
 
-    return Response(content=png_bytes, media_type="image/png")
+    return {"image_base64": base64.b64encode(png_bytes).decode("utf-8")}
