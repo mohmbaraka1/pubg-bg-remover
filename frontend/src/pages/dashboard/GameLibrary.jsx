@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
-
-const ADMIN_EMAIL = "mohammedbaraka842@gmail.com";
+import { getUserAccess } from "../../lib/roles";
 
 const CATEGORIES = [
   { key: "weapons", label: "Weapons", emoji: "🔫", hasTypes: true },
@@ -30,6 +29,7 @@ function safeFileName(originalName) {
 
 export default function GameLibrary() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canUploadLibrary, setCanUploadLibrary] = useState(false);
   const [activeCategory, setActiveCategory] = useState("weapons");
   const [activeType, setActiveType] = useState(null); // null = عرض قائمة الأنواع (المجلدات)
   const [types, setTypes] = useState([]);
@@ -46,7 +46,10 @@ export default function GameLibrary() {
   const categoryInfo = CATEGORIES.find((c) => c.key === activeCategory);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setIsAdmin(data.user?.email === ADMIN_EMAIL));
+    getUserAccess().then(({ isAdmin: admin, canUploadLibrary: canUpload }) => {
+      setIsAdmin(admin);
+      setCanUploadLibrary(canUpload);
+    });
   }, []);
 
   // جلب "المجلدات" (الأنواع) الخاصة بالفئة النشطة
@@ -220,8 +223,8 @@ export default function GameLibrary() {
         className="w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2.5 text-neutral-100 outline-none focus:border-amber-500 mb-6"
       />
 
-      {/* لوحة الإضافة - تظهر فقط لصاحب الموقع، وبس لما نكون داخل نوع محدد أو فئة بدون أنواع */}
-      {isAdmin && (!categoryInfo?.hasTypes || activeType) && (
+      {/* لوحة الإضافة - لصاحب الموقع أو مصمم مصرّح له، وبس لما نكون داخل نوع محدد أو فئة بدون أنواع */}
+      {canUploadLibrary && (!categoryInfo?.hasTypes || activeType) && (
         <div className="bg-neutral-900 border border-amber-500/30 rounded-xl p-4 mb-6">
           <p className="text-amber-400 text-xs font-medium mb-3">
             🔧 لوحة الإدارة — إضافة{" "}
