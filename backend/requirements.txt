@@ -23,7 +23,17 @@ huggingface_hub==0.24.6
 accelerate==0.34.2
 
 # ==== Person detection (locates the main character automatically) ====
-ultralytics==8.2.103
+# YOLOX (Apache-2.0) بدل ultralytics/YOLOv8 (كانت AGPL-3.0 - تفرض نشر كل
+# كود المشروع لو استُخدمت بخدمة SaaS مغلقة المصدر متل هاي). كود YOLOX نفسه
+# مُضمَّن بالمشروع (app/vendor/yolox) مش مثبَّت كحزمة - هاي بس اعتماديات
+# بايثون بحتة يحتاجها ذاك الكود وقت التشغيل (لا شيء منها يحتاج بناء/cmake).
+loguru==0.7.3
+tqdm==4.69.0
+tabulate==0.10.0
+thop==0.1.1.post2209072238
+ninja==1.13.0
+psutil==7.2.2
+tensorboard==2.21.0
 
 # ==== SAM2 (Segment Anything 2, Meta) ====
 # Installed directly from the official repo (no PyPI package yet). Using the

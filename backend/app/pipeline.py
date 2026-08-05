@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -31,6 +32,15 @@ from PIL import Image
 from . import config
 
 logger = logging.getLogger("bg_remover.pipeline")
+
+
+def _ensure_vendor_on_path() -> None:
+    """يضيف app/vendor لـsys.path مرة وحدة - فيها نسخة YOLOX (Apache-2.0)
+    مضمَّنة بالمشروع بدل تثبيتها كحزمة pip (تجنّباً لمشكلة بناء تعتمد على
+    cmake بحزمة PyPI الرسمية) - انظر app/vendor/YOLOX_LICENSE.txt."""
+    vendor_dir = str(Path(__file__).resolve().parent / "vendor")
+    if vendor_dir not in sys.path:
+        sys.path.insert(0, vendor_dir)
 
 
 def _resolve_device() -> str:
@@ -86,10 +96,66 @@ class BackgroundRemovalPipeline:
     def _load_yolo(self) -> None:
         if self._yolo is not None:
             return
-        from ultralytics import YOLO
+        _ensure_vendor_on_path()
+        from yolox.models.build import create_yolox_model
 
-        logger.info("Loading YOLO (%s) for main-character detection...", config.YOLO_MODEL_ID)
-        self._yolo = YOLO(config.YOLO_MODEL_ID)
+        logger.info("Loading YOLOX (%s) for main-character detection...", config.YOLO_MODEL_ID)
+        model = create_yolox_model(config.YOLO_MODEL_ID, pretrained=True, num_classes=80, device=self.device)
+        model.eval()
+        self._yolo = model
+
+    @staticmethod
+    def _yolo_preproc(image_bgr: np.ndarray, input_size: tuple[int, int]) -> tuple[np.ndarray, float]:
+        """letterbox: يصغّر بنفس نسبة الأبعاد ويحشو بلون رمادي (114) بدل ما
+        يشوّه الصورة - تطابق تام مع yolox.data.data_augment.preproc الأصلية،
+        منسوخة هنا مباشرة (بدل استيراد yolox.data) لتجنّب سحب اعتماديات
+        pycocotools غير الضرورية للاستدلال (inference) فقط."""
+        padded = np.ones((input_size[0], input_size[1], 3), dtype=np.uint8) * 114
+        r = min(input_size[0] / image_bgr.shape[0], input_size[1] / image_bgr.shape[1])
+        resized = cv2.resize(
+            image_bgr,
+            (int(image_bgr.shape[1] * r), int(image_bgr.shape[0] * r)),
+            interpolation=cv2.INTER_LINEAR,
+        ).astype(np.uint8)
+        padded[: int(image_bgr.shape[0] * r), : int(image_bgr.shape[1] * r)] = resized
+        padded = padded.transpose((2, 0, 1))
+        padded = np.ascontiguousarray(padded, dtype=np.float32)
+        return padded, r
+
+    def _yolo_detect_persons(
+        self, image_bgr: np.ndarray, conf_thre: float, nms_thre: float = 0.45
+    ) -> list[PersonBox]:
+        """يشغّل YOLOX ويرجّع صناديق "شخص" (COCO class 0) فقط بإحداثيات
+        الصورة الأصلية. بديل موحّد لاستدعاء self._yolo.predict(...) القديم
+        (واجهة ultralytics المريحة) - YOLOX أخفض مستوى (نموذج PyTorch خام)
+        فبنبني نفس المعالجة يدوياً هون مرة وحدة، تستخدمها كل الدوال تحت."""
+        from yolox.utils.boxes import postprocess
+
+        img, ratio = self._yolo_preproc(image_bgr, config.YOLO_INPUT_SIZE)
+        tensor = torch.from_numpy(img).unsqueeze(0).float()
+        if self.device == "cuda":
+            tensor = tensor.to(self.device)
+
+        with torch.no_grad():
+            outputs = self._yolo(tensor)
+            outputs = postprocess(outputs, 80, conf_thre, nms_thre, class_agnostic=True)
+
+        out = outputs[0]
+        if out is None:
+            return []
+        out = out.cpu().numpy()
+
+        boxes: list[PersonBox] = []
+        for det in out:
+            x1, y1, x2, y2, obj_conf, class_conf, cls = det
+            if int(cls) != config.YOLO_PERSON_CLASS_ID:
+                continue
+            boxes.append(PersonBox(
+                x1=int(x1 / ratio), y1=int(y1 / ratio),
+                x2=int(x2 / ratio), y2=int(y2 / ratio),
+                confidence=float(obj_conf * class_conf),
+            ))
+        return boxes
 
     def _load_sam2(self) -> None:
         if self._sam2_predictor is not None:
@@ -180,15 +246,9 @@ class BackgroundRemovalPipeline:
     # ------------------------------------------------------------------ #
     def _detect_main_character(self, image_bgr: np.ndarray) -> PersonBox:
         h, w = image_bgr.shape[:2]
-        results = self._yolo.predict(
-            image_bgr,
-            classes=[config.YOLO_PERSON_CLASS_ID],
-            conf=config.YOLO_CONF_THRESHOLD,
-            verbose=False,
-        )
+        boxes = self._yolo_detect_persons(image_bgr, conf_thre=config.YOLO_CONF_THRESHOLD)
 
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
+        if not boxes:
             # لا يوجد شخص مكتشف بثقة كافية -> نفترض أن الشخصية تشغل مركز
             # الصورة تقريباً (حالة نادرة، لكن نتجنب فشل الطلب بالكامل).
             logger.warning("No person detected by YOLO; falling back to full-frame box.")
@@ -199,8 +259,8 @@ class BackgroundRemovalPipeline:
         best_box: PersonBox | None = None
 
         for box in boxes:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            conf = float(box.conf[0])
+            x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
+            conf = box.confidence
             area = (x2 - x1) * (y2 - y1)
             box_cx, box_cy = (x1 + x2) / 2, (y1 + y2) / 2
             # مسافة طبيعية عن المركز (كلما اقتربت زاد النقاط)
@@ -630,24 +690,18 @@ class BackgroundRemovalPipeline:
         يرجّع كل الأشخاص المكتشفين بالصورة (مرتبين من اليسار لليمين، بنفس
         ترتيب صور اصطفاف الشخصيات المعتادة)، بدل شخصية واحدة فقط.
         """
-        # للاستخراج الجماعي نستخدم عتبة ثقة أخفض (يلتقط شخصيات بوضعيات
-        # غير معتادة/على الأطراف) وسماحية تداخل أعلى بين الصناديق (iou) حتى
-        # لا يُدمَج شخصان متلاصقان ببعض كصندوق واحد فقط بالغلط
-        results = self._yolo.predict(
-            image_bgr,
-            classes=[config.YOLO_PERSON_CLASS_ID],
-            conf=0.15,
-            iou=0.85,
-            verbose=False,
-        )
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
+        # للاستخراج الجماعي نستخدم عتبة ثقة أخفض (يلتقط شخصيات بوضعيات غير
+        # معتادة/على الأطراف). فلتر التكرار الحقيقي (IOU) صايره تحت بعد ما
+        # نبني قائمة الصناديق - نتحكم فيه لحاله لأنه أدق من نفس عتبة الـNMS
+        # الداخلية لـYOLOX.
+        raw_boxes = self._yolo_detect_persons(image_bgr, conf_thre=0.15, nms_thre=0.45)
+        if not raw_boxes:
             return []
 
         detected = []
-        for box in boxes:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            conf = float(box.conf[0])
+        for box in raw_boxes:
+            x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
+            conf = box.confidence
             bw, bh = x2 - x1, y2 - y1
             # فلتر منطقي: الشخص الواقف دايماً أطول من عرضه بوضوح (نسبة
             # ارتفاع/عرض > 1.3 تقريباً). أي صندوق شبه مربّع أو أعرض من طوله

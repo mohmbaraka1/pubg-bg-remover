@@ -25,10 +25,16 @@ SAM2_CHECKPOINT_PATH = WEIGHTS_DIR / "sam2.1_hiera_large.pt"
 BIREFNET_MODEL_ID = "ZhengPeng7/BiRefNet"  # Hugging Face model id
 BIREFNET_INPUT_SIZE = (1024, 1024)
 
-# ---- YOLO (لتحديد صندوق الشخصية الرئيسية تلقائياً) ----
-YOLO_MODEL_ID = "yolov8m.pt"  # يُحمَّل تلقائياً بواسطة ultralytics
+# ---- YOLOX (لتحديد صندوق الشخصية الرئيسية تلقائياً) ----
+# استبدلنا ultralytics/YOLOv8 (رخصة AGPL-3.0 - تفرض نشر كل كود المشروع لو
+# استُخدمت بخدمة SaaS مغلقة المصدر) بـYOLOX (Apache-2.0، Megvii) - نفس دقة
+# كشف "شخص" تقريباً (مدرّب على COCO كمان)، بدون أي قيد على استخدام تجاري
+# مغلق. الوزن مُوفّر تلقائياً (Apache-2.0)، والكود مُضمَّن بـapp/vendor/yolox
+# (انظر app/vendor/YOLOX_LICENSE.txt).
+YOLO_MODEL_ID = "yolox-s"
 YOLO_PERSON_CLASS_ID = 0  # "person" في COCO
 YOLO_CONF_THRESHOLD = 0.25
+YOLO_INPUT_SIZE = (640, 640)
 
 # ---- FSRCNN (تكبير الصور بالذكاء الاصطناعي - Super Resolution) ----
 FSRCNN_MODEL_URL = (

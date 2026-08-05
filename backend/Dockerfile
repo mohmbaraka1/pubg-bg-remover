@@ -31,7 +31,10 @@ RUN pip install --no-cache-dir pillow==10.4.0 opencv-python-headless==4.10.0.84 
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
     torch==2.5.1+cpu torchvision==0.20.1+cpu
 RUN pip install --no-cache-dir timm==1.0.9 transformers==4.44.2 huggingface_hub==0.24.6 accelerate==0.34.2
-RUN pip install --no-cache-dir ultralytics==8.2.103
+# اعتماديات كود YOLOX المُضمَّن (app/vendor/yolox، Apache-2.0) - انظر
+# requirements.txt لتفصيل سبب استبدال ultralytics (AGPL-3.0) به
+RUN pip install --no-cache-dir loguru==0.7.3 tqdm==4.69.0 tabulate==0.10.0 \
+    thop==0.1.1.post2209072238 ninja==1.13.0 psutil==7.2.2 tensorboard==2.21.0
 
 # --no-build-isolation: sam2 يحتاج torch وقت البناء (كشف CUDA/تجميع إضافات
 # اختيارية) - بدون هذا الخيار pip يبني بمكان معزول تماماً ويعيد تحميل torch
