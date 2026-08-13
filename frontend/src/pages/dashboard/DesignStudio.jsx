@@ -708,6 +708,12 @@ export default function DesignStudio() {
     setSlots([{ id: "ai_bg_slot", type: "background", x: 0, y: 0, width: CANVAS_W, height: CANVAS_H }]);
     setLayers(generatedLayers);
     setSelectedId(null);
+
+    // كل شخصية هون بحجم صورتها الأصلية (أبعاد مختلفة تماماً بين وحدة
+    // وثانية) - نفس منطق "توحيد ارتفاع كل الشخصيات" الموجود أصلاً (زر
+    // يدوي بشريط الأدوات) نطبّقه هون تلقائياً كخطوة أخيرة، بدل ما نخلي
+    // المستخدم يضطر يدوس عليه يدوياً كل مرة بعد كل توليد.
+    unifyCharacterHeights();
   };
 
   const handleSmartFillConfirm = (selectedItems) => {
