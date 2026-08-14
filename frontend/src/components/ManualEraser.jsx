@@ -14,6 +14,7 @@ export default function ManualEraser({ beforeUrl = null, resultBlob, onSave, onC
   const [brushSize, setBrushSize] = useState(40);
   const [isDrawing, setIsDrawing] = useState(false);
   const [displayScale, setDisplayScale] = useState(1);
+  const [canvasNaturalWidth, setCanvasNaturalWidth] = useState(0);
   const [history, setHistory] = useState([]); // لتتبع التراجع (Undo)
   const [loaded, setLoaded] = useState(false);
   const [hasOriginal, setHasOriginal] = useState(false);
@@ -84,6 +85,7 @@ export default function ManualEraser({ beforeUrl = null, resultBlob, onSave, onC
       // مقياس العرض حتى يظهر بحجم مناسب بالشاشة
       const maxDisplayWidth = Math.min(900, containerRef.current?.offsetWidth || 900);
       setDisplayScale(Math.min(1, maxDisplayWidth / width));
+      setCanvasNaturalWidth(width);
 
       URL.revokeObjectURL(resultUrl);
       setLoaded(true);
@@ -311,9 +313,9 @@ export default function ManualEraser({ beforeUrl = null, resultBlob, onSave, onC
         </div>
 
         <p className="text-neutral-600 text-xs px-4 pt-2">
-          💡 "مسح" يشيل أي جزء غير مرغوب. "استعادة" يرجّع البكسلات من الصورة الأصلية.
-          "تعبئة بلون" ترسم بلون تختاره (من مربع اللون أو بالضغط على "💧 سحب لون من
-          الصورة" ثم تضغط على أي نقطة بالصورة نفسها لأخذ نفس لونها بالضبط).
+          💡 «مسح» يشيل أي جزء غير مرغوب. «استعادة» يرجّع البكسلات من الصورة الأصلية.
+          «تعبئة بلون» ترسم بلون تختاره (من مربع اللون أو بالضغط على «💧 سحب لون من
+          الصورة» ثم تضغط على أي نقطة بالصورة نفسها لأخذ نفس لونها بالضبط).
         </p>
 
         <div ref={containerRef} className="flex-1 overflow-auto p-4 flex items-center justify-center">
@@ -329,7 +331,7 @@ export default function ManualEraser({ beforeUrl = null, resultBlob, onSave, onC
             <canvas
               ref={canvasRef}
               style={{
-                width: loaded && canvasRef.current ? canvasRef.current.width * displayScale : 0,
+                width: loaded ? canvasNaturalWidth * displayScale : 0,
                 cursor: "crosshair",
                 display: loaded ? "block" : "none",
               }}

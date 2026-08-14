@@ -233,7 +233,7 @@ export default function MyAccounts() {
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-sm text-center">
-            <p className="text-neutral-100 font-medium mb-1">حذف "{deleteTarget.name}"؟</p>
+            <p className="text-neutral-100 font-medium mb-1">حذف «{deleteTarget.name}»؟</p>
             <p className="text-neutral-500 text-sm mb-5">هذا الإجراء لا يمكن التراجع عنه.</p>
             <div className="flex gap-3">
               <button

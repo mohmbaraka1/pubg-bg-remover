@@ -326,7 +326,7 @@ export default function BackgroundRemover() {
       if (cancelledRef.current) break;
       const currentItem = queue.find((i) => i.id === id);
       // نجيب أحدث نسخة من الـ state وقت المعالجة الفعلية
-      // eslint-disable-next-line no-await-in-loop
+
       await processItem(currentItem);
     }
 
@@ -524,8 +524,8 @@ export default function BackgroundRemover() {
 
               <p className="text-neutral-600 text-[11px] mt-3">
                 💡 أول مرة تعالج فيها صورة بالإعدادات المخصصة تاخذ وقتها المعتاد
-                (كشف + تحليل). بعدها، أي تعديل بالشرائط يطبَّق بضغطة "🎚 تطبيق
-                الإعدادات الحالية" بثوانٍ بس (بدون إعادة الكشف من الصفر).
+                (كشف + تحليل). بعدها، أي تعديل بالشرائط يطبَّق بضغطة «🎚 تطبيق
+                الإعدادات الحالية» بثوانٍ بس (بدون إعادة الكشف من الصفر).
               </p>
             </div>
           )}

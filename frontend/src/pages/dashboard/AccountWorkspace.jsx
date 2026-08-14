@@ -136,7 +136,7 @@ export default function AccountWorkspace() {
         <div className="flex flex-col items-center justify-center h-[40vh] text-center border border-dashed border-neutral-800 rounded-2xl">
           <div className="text-3xl mb-3">🗂</div>
           <p className="text-neutral-400 font-medium">لا يوجد عناصر بهذا القسم بعد</p>
-          <p className="text-neutral-600 text-sm mt-1">استخدم زر "إزالة خلفية" بالأعلى لإضافة أول عنصر</p>
+          <p className="text-neutral-600 text-sm mt-1">استخدم زر «إزالة خلفية» بالأعلى لإضافة أول عنصر</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">

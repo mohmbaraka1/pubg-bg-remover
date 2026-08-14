@@ -346,9 +346,8 @@ class BackgroundRemovalPipeline:
         best_idx = top_idx
         top_score = scores[top_idx]
         for idx in order[:3]:
-            if scores[idx] >= top_score - 0.05:
-                if masks[idx].sum() > masks[best_idx].sum():
-                    best_idx = idx
+            if scores[idx] >= top_score - 0.05 and masks[idx].sum() > masks[best_idx].sum():
+                best_idx = idx
 
         mask = masks[best_idx].astype(np.uint8) * 255
         return mask
@@ -401,7 +400,6 @@ class BackgroundRemovalPipeline:
         # نطبّق منحنى تباين (contrast curve) على alpha: يدفع القيم الواطئة
         # جداً نحو الصفر تماماً، والقيم العالية جداً نحو 1، بينما يحافظ على
         # التدرّج الطبيعي لخصلات الشعر وحواف السلاح شبه الشفافة فعلياً.
-        low_thresh, high_thresh = low_thresh, high_thresh
         combined = np.clip((combined - low_thresh) / (high_thresh - low_thresh), 0.0, 1.0)
 
         # إغلاق مورفولوجي خفيف يسدّ أي ثقوب صغيرة داخل الشخصية (مثلاً وسط
@@ -1233,8 +1231,8 @@ def slice_grid(
 
     # نبني الصفوف/الأعمدة من نفس صناديق الشبكة المكتشفة (بدل ما نعيد
     # اكتشافها من الصفر) عشان ترقيم row/col يطابق فعلياً مواضع الصناديق.
-    row_ys = sorted(set(b[1] for b in boxes))
-    col_xs = sorted(set(b[0] for b in boxes))
+    row_ys = sorted({b[1] for b in boxes})
+    col_xs = sorted({b[0] for b in boxes})
 
     cells = []
     for (cx1, cy1, cw, ch) in boxes:

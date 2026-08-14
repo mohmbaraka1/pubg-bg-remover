@@ -9,7 +9,6 @@ import BackgroundPickerModal from "../../components/BackgroundPickerModal";
 const ADMIN_EMAIL = "mohammedbaraka842@gmail.com";
 const CANVAS_WIDTH = 1600;
 const CANVAS_HEIGHT = 900;
-const DISPLAY_MAX_WIDTH = 900;
 
 const PLACEHOLDER_TYPES = [
   { key: "character", label: "شخصية", color: "#f59e0b", defaultW: 300, defaultH: 700 },
@@ -931,7 +930,7 @@ export default function TemplateEditor() {
 
       <p className="text-neutral-600 text-xs mt-3">
         💡 اختر نوع العنصر وأضفه، اسحبه لمكانه، وغيّر حجمه من المقابض. الألوان بس للتمييز
-        بالمحرر، ما راح تظهر بالتصميم النهائي. حدد أي خانة واضغط "🖼 صورة افتراضية" لتجهيز
+        بالمحرر، ما راح تظهر بالتصميم النهائي. حدد أي خانة واضغط «🖼 صورة افتراضية» لتجهيز
         تصميم جاهز يفتح معبّى مباشرة للمستخدم (بدل خانة فاضية).
       </p>
 

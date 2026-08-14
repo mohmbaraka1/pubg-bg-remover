@@ -66,7 +66,7 @@ export default function GameLibrary() {
       .eq("category", activeCategory)
       .order("sort_order", { ascending: true })
       .then(({ data }) => setTypes(data || []));
-  }, [activeCategory]);
+  }, [activeCategory, categoryInfo?.hasTypes]);
 
   // جلب العناصر: إما داخل نوع محدد، أو بحث شامل بالفئة، أو فئة بدون أنواع فرعية
   const fetchItems = async () => {
@@ -112,7 +112,7 @@ export default function GameLibrary() {
       const uniqueName = safeFileName(file.name);
       const storagePath = `game-library/${activeCategory}/${uniqueName}`;
 
-      // eslint-disable-next-line no-await-in-loop
+
       const { error: uploadError } = await supabase.storage.from("user-files").upload(storagePath, file);
       if (uploadError) {
         alert(`فشل الرفع: ${uploadError.message}`);
@@ -120,7 +120,7 @@ export default function GameLibrary() {
       }
       const { data: publicUrlData } = supabase.storage.from("user-files").getPublicUrl(storagePath);
 
-      // eslint-disable-next-line no-await-in-loop
+
       const { error: insertError } = await supabase.from("game_items").insert({
         category: activeCategory,
         name: uploadName.trim(),

@@ -64,7 +64,7 @@ export default function MultiCharacterExtractor() {
 
       if (accountId) {
         for (const item of items) {
-          // eslint-disable-next-line no-await-in-loop
+
           await saveToAccount(item);
         }
       }
@@ -101,7 +101,7 @@ export default function MultiCharacterExtractor() {
       if (insertError) throw insertError;
 
       setResults((prev) => prev.map((r) => (r.id === item.id ? { ...r, saveStatus: "saved" } : r)));
-    } catch (err) {
+    } catch {
       setResults((prev) => prev.map((r) => (r.id === item.id ? { ...r, saveStatus: "error" } : r)));
     }
   };

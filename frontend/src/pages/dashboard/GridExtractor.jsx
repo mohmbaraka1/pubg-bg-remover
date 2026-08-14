@@ -182,13 +182,13 @@ export default function GridExtractor() {
         if (detectionMethod === "cutout") {
           // كل مستطيل هون = عنصر واحد كامل (إطار/هاشتاق) يُفرَّغ من خلفيته
           // بالكامل (BiRefNet) - مش شبكة تُقص لخلايا فرعية زي باقي الأوضاع.
-          // eslint-disable-next-line no-await-in-loop
+
           const res = await fetch(EXTRACT_CUTOUT_API, { method: "POST", body: formData });
           if (!res.ok) {
             const body = await res.json().catch(() => ({}));
             throw new Error(`المستطيل ${i + 1}: ${body.detail || `فشل الطلب (HTTP ${res.status})`}`);
           }
-          // eslint-disable-next-line no-await-in-loop
+
           const data = await res.json();
           allCells.push({
             id: `region${i}_cutout_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -204,13 +204,13 @@ export default function GridExtractor() {
         formData.append("saturation_threshold", threshold);
         formData.append("method", detectionMethod);
 
-        // eslint-disable-next-line no-await-in-loop
+
         const res = await fetch(GRID_SLICE_API, { method: "POST", body: formData });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(`المستطيل ${i + 1}: ${body.detail || `فشل الطلب (HTTP ${res.status})`}`);
         }
-        // eslint-disable-next-line no-await-in-loop
+
         const data = await res.json();
 
         const regionCells = data.cells.map((c) => ({
@@ -281,7 +281,7 @@ export default function GridExtractor() {
         try {
           const upscaleForm = new FormData();
           upscaleForm.append("file", blob, "cell.png");
-          // eslint-disable-next-line no-await-in-loop
+
           const upscaleRes = await fetch(apiUrl("/api/upscale"), { method: "POST", body: upscaleForm });
           if (upscaleRes.ok) {
             blob = await upscaleRes.blob();
@@ -297,7 +297,7 @@ export default function GridExtractor() {
       const uniqueName = `${Date.now()}_${safeName || "item"}.png`;
       const storagePath = `game-library/${cell.category}/${uniqueName}`;
 
-      // eslint-disable-next-line no-await-in-loop
+
       const { error: uploadError } = await supabase.storage
         .from("user-files")
         .upload(storagePath, blob, { contentType: "image/png" });
@@ -307,7 +307,7 @@ export default function GridExtractor() {
       }
       const { data: publicUrlData } = supabase.storage.from("user-files").getPublicUrl(storagePath);
 
-      // eslint-disable-next-line no-await-in-loop
+
       await supabase.from("game_items").insert({
         category: cell.category,
         name: cell.name.trim(),
@@ -414,12 +414,12 @@ export default function GridExtractor() {
           </div>
 
           <p className="text-neutral-600 text-xs mb-3">
-            💡 كل مستطيل بلون مختلف. اضغط "+ إضافة مستطيل" لكل صف عناصر (أسلحة، سيارات، إطارات...)،
-            حرّكهم وحجّمهم فوق كل صف، وبعدها اضغط "قص كل المستطيلات" مرة وحدة بس.
+            💡 كل مستطيل بلون مختلف. اضغط «+ إضافة مستطيل» لكل صف عناصر (أسلحة، سيارات، إطارات...)،
+            حرّكهم وحجّمهم فوق كل صف، وبعدها اضغط «قص كل المستطيلات» مرة وحدة بس.
           </p>
           {detectionMethod === "cutout" && (
             <p className="text-purple-400 text-xs mb-3">
-              ✂️ بوضع "تفريغ عنصر مفرد": كل مستطيل = عنصر واحد بس (إطار وحد أو هاشتاق وحد) وبيتفرّغ
+              ✂️ بوضع «تفريغ عنصر مفرد»: كل مستطيل = عنصر واحد بس (إطار وحد أو هاشتاق وحد) وبيتفرّغ
               بالكامل من خلفيته الفوتوغرافية. لو عندك أكتر من إطار بالصورة، ضيف مستطيل منفصل لكل وحد
               (مو مستطيل واحد يلفّهم كلهم).
             </p>

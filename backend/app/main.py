@@ -9,7 +9,6 @@ Background Remover API — المرحلة الأولى فقط.
     -> يرجع صورة PNG بخلفية شفافة.
 """
 import base64
-import io
 import logging
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -76,7 +75,7 @@ async def remove_background(
             capture_padding_y=capture_padding_y,
             use_black_bg_refine=use_black_bg_refine,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Background removal failed")
         raise HTTPException(status_code=500, detail=f"فشل معالجة الصورة: {exc}") from exc
 
@@ -92,7 +91,7 @@ async def detect_full_layout(file: UploadFile = File(...)):
     raw = await file.read()
     try:
         result = pipeline.detect_full_template_layout(raw)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Detect full layout failed")
         raise HTTPException(status_code=500, detail=f"فشل الكشف: {exc}") from exc
     return result
@@ -107,7 +106,7 @@ async def detect_people(file: UploadFile = File(...)):
     raw = await file.read()
     try:
         result = pipeline.detect_people_boxes(raw)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Detect people failed")
         raise HTTPException(status_code=500, detail=f"فشل الكشف: {exc}") from exc
     return result
@@ -122,7 +121,7 @@ async def upscale(file: UploadFile = File(...)):
     raw = await file.read()
     try:
         result_png = pipeline.upscale_image(raw)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Upscale failed")
         raise HTTPException(status_code=500, detail=f"فشل التكبير: {exc}") from exc
 
@@ -141,7 +140,7 @@ async def prepare_tuning(file: UploadFile = File(...)):
     raw = await file.read()
     try:
         session_id = pipeline.prepare_tuning_session(raw)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Prepare tuning session failed")
         raise HTTPException(status_code=500, detail=f"فشل التحضير: {exc}") from exc
 
@@ -170,7 +169,7 @@ async def tune_background(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Tune combine failed")
         raise HTTPException(status_code=500, detail=f"فشل التعديل: {exc}") from exc
 
@@ -200,7 +199,7 @@ async def remove_background_multi(file: UploadFile = File(...)):
 
     try:
         results = pipeline.remove_background_multi(raw)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Multi-character background removal failed")
         raise HTTPException(status_code=500, detail=f"فشل استخراج الشخصيات: {exc}") from exc
 
@@ -235,7 +234,7 @@ async def grid_slice(
             cells = slice_grid_by_color(raw, rect_x, rect_y, rect_w, rect_h)
         else:
             cells = slice_grid(raw, rect_x, rect_y, rect_w, rect_h, saturation_threshold)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Grid slicing failed")
         raise HTTPException(status_code=500, detail=f"فشل تقطيع الشبكة: {exc}") from exc
 
@@ -269,7 +268,7 @@ async def extract_cutout(
     raw = await file.read()
     try:
         png_bytes = pipeline.extract_salient_cutout(raw, rect_x, rect_y, rect_w, rect_h)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("Salient cutout extraction failed")
         raise HTTPException(status_code=500, detail=f"فشل تفريغ العنصر: {exc}") from exc
 

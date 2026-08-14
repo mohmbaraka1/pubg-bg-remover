@@ -47,7 +47,7 @@ export default function ResourceLibrary({ tableName, label, accept, emoji }) {
       const uniqueName = `${Date.now()}_${file.name}`;
       const storagePath = `users/${userId}/resources/${tableName}/${uniqueName}`;
 
-      // eslint-disable-next-line no-await-in-loop
+
       const { error: uploadError } = await supabase.storage
         .from("user-files")
         .upload(storagePath, file);
@@ -59,7 +59,7 @@ export default function ResourceLibrary({ tableName, label, accept, emoji }) {
 
       const { data: publicUrlData } = supabase.storage.from("user-files").getPublicUrl(storagePath);
 
-      // eslint-disable-next-line no-await-in-loop
+
       await supabase.from(tableName).insert({
         user_id: userId,
         name: file.name.replace(/\.[^/.]+$/, ""),

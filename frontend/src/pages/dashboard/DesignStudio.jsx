@@ -12,6 +12,11 @@ const CANVAS_WIDTH = 1600;
 const CANVAS_HEIGHT = 900;
 const GUIDE_THRESHOLD = 6;
 
+// عدّاد وحدة بدل Date.now() لتوليد id فريد للعناصر - نفس الغرض (فريد
+// بكل جلسة) بدون استدعاء دالة غير نقية (impure) وقت الرندر.
+let idCounter = 0;
+const nextId = () => idCounter++;
+
 // ============ خطوط المحاذاة الذكية (Smart Guides) ============
 function getLineGuideStops(skipId, layers) {
   const vertical = [0, CANVAS_WIDTH / 2, CANVAS_WIDTH];
@@ -57,22 +62,6 @@ function computeSnapGuides(stops, bounds, threshold = GUIDE_THRESHOLD) {
   if (h) guides.push({ orientation: "H", lineGuide: h.lineGuide, offset: h.offset });
   return guides;
 }
-
-// أنواع الأماكن اللي تحتاج صورة (مو نص، ومو خلفية - تلك لها معاملة خاصة)
-const IMAGE_TYPES = new Set([
-  "character",
-  "weapon",
-  "vehicle",
-  "helmet",
-  "backpack",
-  "frame",
-  "achievement",
-  "emote",
-  "logo",
-  "mythic_gold",
-  "counter",
-  "level",
-]);
 
 function BackgroundImage({ src, blur, slot }) {
   const [img] = useImage(src, "anonymous");
@@ -374,6 +363,42 @@ export default function DesignStudio() {
   const overlayLayerRef = useRef();
   const logoInputRef = useRef();
 
+  const applyTemplate = (tpl) => {
+    setActiveTemplate(tpl);
+    setSelectedId(null);
+    const placeholdersList = tpl.placeholders || [];
+
+    // الخانات اللي معاها صورة افتراضية تتعبى تلقائياً (تصميم جاهز)،
+    // والباقي يضل فاضي زي المعتاد (يعبّيه المستخدم يدوياً)
+    const emptyOnes = placeholdersList.filter((p) => !p.default_image_url);
+    const filledOnes = placeholdersList.filter((p) => p.default_image_url);
+
+    setSlots(emptyOnes.map((p) => ({ ...p })));
+
+    const initialLayers = filledOnes.map((p, i) => {
+      const fitMode = p.type === "character" ? "height" : p.type === "background" ? "stretch" : "contain";
+      return {
+        id: `layer_${nextId()}_${i}`,
+        slotId: p.id,
+        slotType: p.type,
+        src: p.default_image_url,
+        fitMode,
+        x: p.x,
+        y: p.y,
+        width: p.width,
+        height: p.height,
+        slotX: p.x,
+        slotY: p.y,
+        slotWidth: p.width,
+        slotHeight: p.height,
+        rotation: p.rotation || 0,
+        fitted: true, // نثق بالحجم/الموضع المحفوظ بالضبط - ما نعيد حسابه
+        isBackground: p.type === "background",
+      };
+    });
+    setLayers(initialLayers);
+  };
+
   useEffect(() => {
     supabase
       .from("design_templates")
@@ -402,44 +427,8 @@ export default function DesignStudio() {
     return () => window.removeEventListener("resize", updateScale);
   }, [activeTemplate]);
 
-  const applyTemplate = (tpl) => {
-    setActiveTemplate(tpl);
-    setSelectedId(null);
-    const placeholdersList = tpl.placeholders || [];
-
-    // الخانات اللي معاها صورة افتراضية تتعبى تلقائياً (تصميم جاهز)،
-    // والباقي يضل فاضي زي المعتاد (يعبّيه المستخدم يدوياً)
-    const emptyOnes = placeholdersList.filter((p) => !p.default_image_url);
-    const filledOnes = placeholdersList.filter((p) => p.default_image_url);
-
-    setSlots(emptyOnes.map((p) => ({ ...p })));
-
-    const initialLayers = filledOnes.map((p, i) => {
-      const fitMode = p.type === "character" ? "height" : p.type === "background" ? "stretch" : "contain";
-      return {
-        id: `layer_${Date.now()}_${i}`,
-        slotId: p.id,
-        slotType: p.type,
-        src: p.default_image_url,
-        fitMode,
-        x: p.x,
-        y: p.y,
-        width: p.width,
-        height: p.height,
-        slotX: p.x,
-        slotY: p.y,
-        slotWidth: p.width,
-        slotHeight: p.height,
-        rotation: p.rotation || 0,
-        fitted: true, // نثق بالحجم/الموضع المحفوظ بالضبط - ما نعيد حسابه
-        isBackground: p.type === "background",
-      };
-    });
-    setLayers(initialLayers);
-  };
-
   const fillImageSlot = (src, slot, fitMode) => {
-    const id = `layer_${Date.now()}`;
+    const id = `layer_${nextId()}`;
     setLayers((prev) => [
       ...prev,
       {
@@ -471,7 +460,7 @@ export default function DesignStudio() {
   const fillTextSlot = (slot) => {
     const text = prompt("اكتب النص:", "");
     if (!text) return;
-    const id = `layer_${Date.now()}`;
+    const id = `layer_${nextId()}`;
     setLayers((prev) => [
       ...prev,
       {
@@ -618,7 +607,7 @@ export default function DesignStudio() {
       leftIcons.forEach((item, i) => {
         const x = 20 + i * (iconSize + gap);
         generatedLayers.push({
-          id: `ai_icon_l_${i}_${Date.now()}`,
+          id: `ai_icon_l_${i}_${nextId()}`,
           slotType: item.category === "vehicles" ? "vehicle" : "weapon",
           src: item.src,
           fitMode: "contain",
@@ -630,7 +619,7 @@ export default function DesignStudio() {
       rightIcons.forEach((item, i) => {
         const x = CANVAS_W - 20 - (i + 1) * (iconSize + gap) + gap;
         generatedLayers.push({
-          id: `ai_icon_r_${i}_${Date.now()}`,
+          id: `ai_icon_r_${i}_${nextId()}`,
           slotType: item.category === "vehicles" ? "vehicle" : "weapon",
           src: item.src,
           fitMode: "contain",
@@ -651,7 +640,7 @@ export default function DesignStudio() {
         const x = 20 + col * (iconSize + gap);
         const y = 20 + row * (iconSize + gap);
         generatedLayers.push({
-          id: `ai_icon_c_${i}_${Date.now()}`,
+          id: `ai_icon_c_${i}_${nextId()}`,
           slotType: item.category === "vehicles" ? "vehicle" : "weapon",
           src: item.src,
           fitMode: "contain",
@@ -670,7 +659,7 @@ export default function DesignStudio() {
         icons.forEach((item, i) => {
           const x = margin + i * (iconSize + gap);
           generatedLayers.push({
-            id: `ai_icon_${i}_${Date.now()}`,
+            id: `ai_icon_${i}_${nextId()}`,
             slotType: item.category === "vehicles" ? "vehicle" : "weapon",
             src: item.src,
             fitMode: "contain",
@@ -693,7 +682,7 @@ export default function DesignStudio() {
       characters.forEach((item, i) => {
         const x = sideMargin + i * (slotWidth + gapBetween);
         generatedLayers.push({
-          id: `ai_char_${i}_${Date.now()}`,
+          id: `ai_char_${i}_${nextId()}`,
           slotType: "character",
           src: item.src,
           fitMode: "height",
@@ -732,7 +721,7 @@ export default function DesignStudio() {
       const fitMode = targetType === "character" ? "height" : "contain";
       if (targetType === "character") filledAnyCharacter = true;
       newLayers.push({
-        id: `layer_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `layer_${nextId()}_${i}`,
         slotId: slot.id,
         slotType: slot.type,
         src: item.src,
@@ -797,7 +786,7 @@ export default function DesignStudio() {
   };
 
   const addFreeLayer = (src) => {
-    const id = `layer_${Date.now()}`;
+    const id = `layer_${nextId()}`;
     setLayers((prev) => [
       ...prev,
       {
@@ -901,10 +890,10 @@ export default function DesignStudio() {
   };
 
   const addVerticalRuler = () => {
-    setRulers((prev) => [...prev, { id: `ruler_${Date.now()}`, type: "v", pos: CANVAS_WIDTH / 2 }]);
+    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "v", pos: CANVAS_WIDTH / 2 }]);
   };
   const addHorizontalRuler = () => {
-    setRulers((prev) => [...prev, { id: `ruler_${Date.now()}`, type: "h", pos: CANVAS_HEIGHT / 2 }]);
+    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "h", pos: CANVAS_HEIGHT / 2 }]);
   };
   const updateRulerPos = (id, pos) => {
     setRulers((prev) => prev.map((r) => (r.id === id ? { ...r, pos } : r)));
