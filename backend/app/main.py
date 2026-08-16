@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from . import config
-from .pipeline import pipeline, slice_grid, slice_grid_by_color
+from .pipeline import pipeline, slice_grid, slice_grid_by_color, detect_grid_boundaries
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bg_remover.main")
@@ -248,6 +248,30 @@ async def grid_slice(
             for c in cells
         ]
     }
+
+
+@app.post("/api/grid-detect")
+async def grid_detect(
+    file: UploadFile = File(...),
+    rect_x: int = Form(...),
+    rect_y: int = Form(...),
+    rect_w: int = Form(...),
+    rect_h: int = Form(...),
+    method: str = Form("projection"),
+):
+    """
+    زي /api/grid-slice تماماً بس **بدون قص فعلي** - يرجّع إحداثيات الخلايا
+    المكتشفة بس (بمقياس الصورة الأصلية كاملة) عشان الفرونت إند يعرضها
+    كمعاينة قابلة للتعديل (سحب/تحجيم/حذف/إضافة) فوق الصورة قبل أي قص نهائي.
+    """
+    raw = await file.read()
+    try:
+        boxes = detect_grid_boundaries(raw, rect_x, rect_y, rect_w, rect_h, method)
+    except Exception as exc:
+        logger.exception("Grid detection failed")
+        raise HTTPException(status_code=500, detail=f"فشل اكتشاف الشبكة: {exc}") from exc
+
+    return {"boxes": boxes}
 
 
 @app.post("/api/extract-cutout")

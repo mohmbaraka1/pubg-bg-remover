@@ -1095,7 +1095,7 @@ pipeline = BackgroundRemovalPipeline()
 # التباين ضعيف جداً بالعين المجردة.
 # ============================================================
 def _pitch_and_phase(
-    profile: np.ndarray, min_period: int, max_period: int
+    profile: np.ndarray, min_period: int, max_period: int, min_confidence: float = 0.3
 ) -> tuple[int, int, int] | None:
     """يرجّع (period, phase, count) لبروفايل 1D فيه شبكة دورية من فواصل
     خافتة (قيمة أقل من المحيط) عند المواضع phase + k*period.
@@ -1105,6 +1105,11 @@ def _pitch_and_phase(
     الخطوة 2: بما إن الدورة معروفة، نبحث فقط عن "أفضل طور" (phase من 0
     لـ period-1) اللي يخلي متوسط شدة الرمادي عند كل مواضع الفواصل المتوقعة
     أقل ما يمكن - وهو نفسه موضع الفواصل الحقيقي (أغمق من داخل الخلية).
+
+    min_confidence قابل للتخفيض من المستدعي (انظر _periodic_grid_cells) -
+    محاولة أولى صارمة (0.3) ثم محاولة ثانية أخف (0.15) بدل الاستسلام
+    مباشرة لو فشلت الأولى، لأن بعض الشبكات (فواصل خافتة جداً/إضاءة غير
+    متساوية) عندها ذروة autocorrelation حقيقية لكن أضعف من 0.3.
     """
     n = len(profile)
     centered = profile - profile.mean()
@@ -1126,7 +1131,7 @@ def _pitch_and_phase(
     # مختلطة فيها أكثر من شبكة بحجم خلية مختلف، أو مساحة بلا شبكة إطلاقاً)
     # - أرفض بدل ما أرجّع عدد خلايا وهمي/سخيف (رأينا هذا فعلياً: مئات
     # الخلايا المزيّفة لما الدورية المكتشفة كانت ضجيج بحت).
-    if search[best_idx] < 0.3:
+    if search[best_idx] < min_confidence:
         return None
 
     count = round(n / period)
@@ -1145,9 +1150,23 @@ def _pitch_and_phase(
     return period, best_phase, count
 
 
-def _periodic_grid_cells(
-    region_bgr: np.ndarray, min_period: int = 20
-) -> list[tuple[int, int, int, int]]:
+def _axis_pitch_with_fallback(profile: np.ndarray, dim: int) -> tuple[int, int, int] | None:
+    """يحسب min_period تلقائياً حسب حجم المحور نفسه (بدل رقم ثابت 20 كان
+    يفشل على شبكات فيها خلايا أصغر من 20px بمناطق صغيرة، أو يسمح بفترات
+    قصيرة/ضجيج وهمية بمناطق كبيرة) - نفس حد العدد المسموح (2-20 خلية)
+    المستخدم أصلاً بـ_pitch_and_phase، فمين_period = أصغر فترة ممكنة تنتج
+    20 خلية بالضبط كحد أقصى، بحد أدنى مطلق 8px يمنع اعتباره ضجيج تصوير.
+    يجرّب أول شي بثقة صارمة (0.3)، ولو فشلت يعيد المحاولة بثقة أخف (0.15)
+    بدل ما يستسلم فوراً - يغطي شبكات فواصلها خافتة جداً بالعين المجردة."""
+    min_period = max(8, dim // 20)
+    max_period = max(min_period + 1, dim // 2)
+    result = _pitch_and_phase(profile, min_period, max_period, min_confidence=0.3)
+    if result is not None:
+        return result
+    return _pitch_and_phase(profile, min_period, max_period, min_confidence=0.15)
+
+
+def _periodic_grid_cells(region_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
     """يكتشف صناديق (x, y, w, h) لخلايا شبكة منتظمة داخل region_bgr، عبر
     إيجاد الدورية بمحوري الصفوف والأعمدة كل على حدة (انظر _pitch_and_phase).
     يفترض أن المنطقة المعطاة تحتوي فعلاً شبكة واحدة منتظمة (نفس حجم الخلية
@@ -1161,8 +1180,8 @@ def _periodic_grid_cells(
     col_profile = gray.mean(axis=0)
     row_profile = gray.mean(axis=1)
 
-    col_res = _pitch_and_phase(col_profile, min_period, max(min_period + 1, w // 2))
-    row_res = _pitch_and_phase(row_profile, min_period, max(min_period + 1, h // 2))
+    col_res = _axis_pitch_with_fallback(col_profile, w)
+    row_res = _axis_pitch_with_fallback(row_profile, h)
     if col_res is None or row_res is None:
         return []
 
@@ -1248,33 +1267,13 @@ def slice_grid(
     return cells
 
 
-def slice_grid_by_color(
-    image_bytes: bytes,
-    rect_x: int,
-    rect_y: int,
-    rect_w: int,
-    rect_h: int,
-) -> list[dict]:
-    """
-    طريقة اكتشاف بديلة: تحدد حدود كل بطاقة عبر البحث عن ألوان إطارات
-    البطاقات الشائعة (وردي/بنفسجي/أحمر/ذهبي) + تحليل Contours، بدل التحليل
-    الخطي بالتشبع. أدق لبطاقات ذات إطارات ملوّنة واضحة، لكن يجب أن تُطبَّق
-    داخل منطقة محددة يدوياً (وليس على الصورة كاملة) لتفادي التباس ألوان
-    ملابس الشخصيات بألوان إطارات البطاقات.
-    """
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    full = np.array(image)
-    full_bgr = cv2.cvtColor(full, cv2.COLOR_RGB2BGR)
-
-    h, w = full_bgr.shape[:2]
-    x1 = max(0, rect_x)
-    y1 = max(0, rect_y)
-    x2 = min(w, rect_x + rect_w)
-    y2 = min(h, rect_y + rect_h)
-    region = full_bgr[y1:y2, x1:x2]
-    rh, rw = region.shape[:2]
-
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+def _color_contour_boxes(region_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """يحدد حدود كل بطاقة عبر البحث عن ألوان إطارات البطاقات الشائعة
+    (وردي/بنفسجي/أحمر/ذهبي) + تحليل Contours - مستخرجة من slice_grid_by_color
+    الأصلية كدالة مستقلة عشان يُعاد استخدامها بدالة اكتشاف الحدود فقط
+    (بدون قص) لخطوة المعاينة، وبدالة القص النهائي، من نفس المصدر بالضبط."""
+    rh, rw = region_bgr.shape[:2]
+    hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
 
     # نطاقات ألوان إطارات البطاقات الشائعة بألعاب الموبايل (Battle Royale)
     color_ranges = [
@@ -1304,6 +1303,35 @@ def slice_grid_by_color(
 
     # ترتيب البطاقات: من أعلى لأسفل، ثم من اليسار لليمين (لتقريب ترتيب صف/عمود)
     boxes.sort(key=lambda b: (round(b[1] / 40), b[0]))
+    return boxes
+
+
+def slice_grid_by_color(
+    image_bytes: bytes,
+    rect_x: int,
+    rect_y: int,
+    rect_w: int,
+    rect_h: int,
+) -> list[dict]:
+    """
+    طريقة اكتشاف بديلة: تحدد حدود كل بطاقة عبر البحث عن ألوان إطارات
+    البطاقات الشائعة (وردي/بنفسجي/أحمر/ذهبي) + تحليل Contours، بدل التحليل
+    الخطي بالتشبع. أدق لبطاقات ذات إطارات ملوّنة واضحة، لكن يجب أن تُطبَّق
+    داخل منطقة محددة يدوياً (وليس على الصورة كاملة) لتفادي التباس ألوان
+    ملابس الشخصيات بألوان إطارات البطاقات.
+    """
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    full = np.array(image)
+    full_bgr = cv2.cvtColor(full, cv2.COLOR_RGB2BGR)
+
+    h, w = full_bgr.shape[:2]
+    x1 = max(0, rect_x)
+    y1 = max(0, rect_y)
+    x2 = min(w, rect_x + rect_w)
+    y2 = min(h, rect_y + rect_h)
+    region = full_bgr[y1:y2, x1:x2]
+
+    boxes = _color_contour_boxes(region)
 
     cells = []
     for i, (x, y, cw, ch) in enumerate(boxes):
@@ -1315,3 +1343,36 @@ def slice_grid_by_color(
         cells.append({"row": i // 20, "col": i % 20, "png_bytes": buf.getvalue()})
 
     return cells
+
+
+def detect_grid_boundaries(
+    image_bytes: bytes,
+    rect_x: int,
+    rect_y: int,
+    rect_w: int,
+    rect_h: int,
+    method: str = "projection",
+) -> list[dict]:
+    """يكتشف حدود الخلايا داخل مستطيل محدد **بدون قصّها** - يرجّع الإحداثيات
+    فقط (بمقياس الصورة الأصلية كاملة، مو نسبية للمستطيل) عشان الفرونت إند
+    يعرضها كمعاينة قابلة للتعديل فوق الصورة الأصلية قبل أي قص فعلي."""
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    full = np.array(image)
+    full_bgr = cv2.cvtColor(full, cv2.COLOR_RGB2BGR)
+
+    h, w = full_bgr.shape[:2]
+    x1 = max(0, rect_x)
+    y1 = max(0, rect_y)
+    x2 = min(w, rect_x + rect_w)
+    y2 = min(h, rect_y + rect_h)
+    region = full_bgr[y1:y2, x1:x2]
+
+    if method == "color":
+        boxes = _color_contour_boxes(region)
+    else:
+        boxes = _periodic_grid_cells(region)
+
+    return [
+        {"x": x1 + bx, "y": y1 + by, "w": bw, "h": bh}
+        for (bx, by, bw, bh) in boxes
+    ]
