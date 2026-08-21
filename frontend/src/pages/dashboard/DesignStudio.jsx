@@ -8,8 +8,6 @@ import AssetPickerModal from "../../components/AssetPickerModal";
 import BackgroundPickerModal from "../../components/BackgroundPickerModal";
 import SmartFillModal from "../../components/SmartFillModal";
 
-const CANVAS_WIDTH = 1600;
-const CANVAS_HEIGHT = 900;
 const GUIDE_THRESHOLD = 6;
 
 // عدّاد وحدة بدل Date.now() لتوليد id فريد للعناصر - نفس الغرض (فريد
@@ -18,9 +16,11 @@ let idCounter = 0;
 const nextId = () => idCounter++;
 
 // ============ خطوط المحاذاة الذكية (Smart Guides) ============
-function getLineGuideStops(skipId, layers) {
-  const vertical = [0, CANVAS_WIDTH / 2, CANVAS_WIDTH];
-  const horizontal = [0, CANVAS_HEIGHT / 2, CANVAS_HEIGHT];
+// تستقبل أبعاد الكانفاس كمعاملات (مو ثابت خارجي) - عشان تشتغل صح لأي
+// تيمبلت بأبعاده الحقيقية، مو بس 1600×900 دايماً.
+function getLineGuideStops(skipId, layers, canvasWidth, canvasHeight) {
+  const vertical = [0, canvasWidth / 2, canvasWidth];
+  const horizontal = [0, canvasHeight / 2, canvasHeight];
   layers.forEach((l) => {
     if (l.id === skipId || l.isBackground) return;
     vertical.push(l.x, l.x + l.width / 2, l.x + l.width);
@@ -344,6 +344,12 @@ export default function DesignStudio() {
   const [templates, setTemplates] = useState([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [activeTemplate, setActiveTemplate] = useState(null);
+  // === أبعاد الكانفاس ديناميكية الآن (كانت ثابتة على 1600×900 دايماً) ===
+  // تتحدث من canvas_width/canvas_height المحفوظة بكل تيمبلت وقت تحميله؛
+  // القيمة الافتراضية (1600×900) تُستخدم بس لو ما فيه تيمبلت محمّل بعد
+  // (مثلاً وضع "عنصر حر" بدون تيمبلت أساسي).
+  const [canvasWidth, setCanvasWidth] = useState(1600);
+  const [canvasHeight, setCanvasHeight] = useState(900);
   const [slots, setSlots] = useState([]);
   const [layers, setLayers] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -366,6 +372,12 @@ export default function DesignStudio() {
   const applyTemplate = (tpl) => {
     setActiveTemplate(tpl);
     setSelectedId(null);
+    // === الإصلاح الجذري: نقرأ أبعاد الكانفاس الحقيقية من التيمبلت نفسه ===
+    // (بدل الثابت 1600×900 اللي كان يُفرض دايماً بغض النظر عن حجم
+    // التيمبلت الفعلي - وهذا كان يسبب مستطيل أبيض فاضي بالمساحة الزايدة
+    // لأي تيمبلت بأبعاد مختلفة).
+    setCanvasWidth(tpl.canvas_width || 1600);
+    setCanvasHeight(tpl.canvas_height || 900);
     const placeholdersList = tpl.placeholders || [];
 
     // الخانات اللي معاها صورة افتراضية تتعبى تلقائياً (تصميم جاهز)،
@@ -420,12 +432,12 @@ export default function DesignStudio() {
   useEffect(() => {
     const updateScale = () => {
       if (!containerRef.current) return;
-      setScale(Math.min(1, containerRef.current.offsetWidth / CANVAS_WIDTH));
+      setScale(Math.min(1, containerRef.current.offsetWidth / canvasWidth));
     };
     updateScale();
     window.addEventListener("resize", updateScale);
     return () => window.removeEventListener("resize", updateScale);
-  }, [activeTemplate]);
+  }, [activeTemplate, canvasWidth]);
 
   const fillImageSlot = (src, slot, fitMode) => {
     const id = `layer_${nextId()}`;
@@ -452,9 +464,12 @@ export default function DesignStudio() {
     ]);
     setSlots((prev) => prev.filter((s) => s.id !== slot.id));
     setSelectedId(id);
-    if (slot.type === "character") {
-      unifyCharacterHeights();
-    }
+    // === ملاحظة مهمة: أزلنا استدعاء unifyCharacterHeights() التلقائي هون ===
+    // كان يوحّد ارتفاع كل الشخصيات تلقائياً بعد كل تعبئة، حتى لو التيمبلت
+    // نفسه مصمم بقصد بأحجام مختلفة (زي شخصية مركزية أكبر من الجنبيات) -
+    // هذا كان يلغي التصميم المقصود بالتيمبلت الأصلي. الزر اليدوي "توحيد
+    // ارتفاع كل الشخصيات" بشريط الأدوات لسه موجود لو المستخدم يبي فعلاً
+    // يوحّد الأحجام بنفسه عن قصد.
   };
 
   const fillTextSlot = (slot) => {
@@ -525,14 +540,20 @@ export default function DesignStudio() {
   };
 
   // يوحّد ارتفاع كل الشخصيات دفعة وحدة، ويحافظ على وقوفها بنفس خط الأرض
+  // === توحيد ارتفاع الشخصيات - محدّث ليعمل صف بصف بدون تأثير متبادل ===
+  // المشكلة السابقة: كل ضغطة على الزر كانت تعيد حساب "الارتفاع الأكثر
+  // تكراراً" من *كل* الشخصيات بالتصميم (بما فيها الصفوف اللي سبق وظبطتها
+  // ووثقت منها) - فلو صف ثاني فيه شخصيات أكثر، ممكن "يقلب" الحساب ويغيّر
+  // حتى الصف الأول اللي كنت خلصت منه.
+  //
+  // الحل: كل شخصية توحّدت مرة، تتعلّم بعلامة heightUnified=true - أي
+  // ضغطة توحيد جديدة تتجاهلها تماماً (ما تدخل بحساب الأكثر تكراراً ولا
+  // تتغيّر)، وتشتغل بس على الشخصيات "الجديدة" (اللي لسه ما توحّدت).
   const unifyCharacterHeights = () => {
     setLayers((prev) => {
-      const characterLayers = prev.filter((l) => l.slotType === "character");
+      const characterLayers = prev.filter((l) => l.slotType === "character" && !l.heightUnified);
       if (characterLayers.length === 0) return prev;
 
-      // نحدد الارتفاع المرجعي من التصميم الحالي نفسه (أكثر ارتفاع متكرر بين
-      // الشخصيات الموجودة) بدل رقم ثابت قد لا يناسب كل تيمبلت (بعض
-      // التيمبلتات المستوردة من صور مرجعية أماكنها أصغر من 700 مثلاً)
       const heights = characterLayers.map((l) => Math.round(l.slotHeight ?? l.height));
       const counts = {};
       heights.forEach((h) => (counts[h] = (counts[h] || 0) + 1));
@@ -541,7 +562,7 @@ export default function DesignStudio() {
       );
 
       return prev.map((l) => {
-        if (l.slotType !== "character") return l;
+        if (l.slotType !== "character" || l.heightUnified) return l; // صفوف مكتملة تضل بدون تغيير
         const currentBottom = (l.slotY ?? l.y) + (l.slotHeight ?? l.height);
         const newSlotY = currentBottom - targetHeight;
         return {
@@ -551,9 +572,16 @@ export default function DesignStudio() {
           slotY: newSlotY,
           y: newSlotY,
           height: targetHeight,
+          heightUnified: true, // تصير "مكتملة" - أي توحيد لاحق يتجاهلها
         };
       });
     });
+  };
+
+  // زر احتياطي لو احتجت تعيد التوحيد من الصفر لكل الشخصيات (يمسح علامة
+  // "مكتمل" من الكل، وترجع تقدر تستخدم الزر العادي من جديد على الكل)
+  const resetHeightUnification = () => {
+    setLayers((prev) => prev.map((l) => (l.slotType === "character" ? { ...l, heightUnified: false } : l)));
   };
 
   const CATEGORY_TO_SLOT_TYPE = {
@@ -578,8 +606,103 @@ export default function DesignStudio() {
   const [pendingAIItems, setPendingAIItems] = useState(null);
   const [layoutChooserOpen, setLayoutChooserOpen] = useState(false);
 
+  // محرك مطابقة التيمبلتات: بدل ما "الذكاء الاصطناعي" يخترع تخطيط هندسي من
+  // الصفر، يقارن أعداد العناصر يلي اختارها المستخدم (شخصيات/أسلحة/مركبات...)
+  // بعدّادات كل تيمبلت محفوظة فعلياً (char_count, weapon_count...) ويرجّع
+  // أقرب تيمبلت حقيقي مبني يدوياً - بدل تخمين هندسي، إعادة استخدام تصميم
+  // محترف فعلي. وزن فرق عدد الشخصيات أعلى من الباقي لأنه أكتر عنصر مؤثر
+  // بصرياً على شكل أي تصميم.
+  const findBestMatchingTemplate = (selectedItems) => {
+    const counts = {};
+    selectedItems.forEach((item) => {
+      const key = CATEGORY_TO_SLOT_TYPE[item.category] || item.category;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+
+    const countFieldByType = {
+      character: "char_count",
+      weapon: "weapon_count",
+      vehicle: "vehicle_count",
+      helmet: "helmet_count",
+      backpack: "backpack_count",
+      frame: "frame_count",
+    };
+
+    let best = null;
+    let bestScore = Infinity;
+    templates.forEach((tpl) => {
+      let score = 0;
+      Object.entries(countFieldByType).forEach(([type, field]) => {
+        const wanted = counts[type] || 0;
+        const have = tpl[field] || 0;
+        score += Math.abs(wanted - have) * (type === "character" ? 3 : 1);
+      });
+      if (score < bestScore) {
+        bestScore = score;
+        best = tpl;
+      }
+    });
+    return best;
+  };
+
+  // يعبّي أفضل تيمبلت مطابق مباشرة بالعناصر المختارة - بدون تدخل يدوي
+  // لاختيار تيمبلت، وبدون توليد هندسي من الصفر. لو ما في تيمبلتات محفوظة
+  // أصلاً بعد، نرجع لطريقة التوليد الهندسي القديمة كبديل احتياطي بس (أفضل
+  // من ولا شي لحساب لسا ما بنى فيه تيمبلتات).
+  const fillMatchedTemplate = (tpl, selectedItems) => {
+    setActiveTemplate(tpl);
+    const placeholdersList = tpl.placeholders || [];
+    const emptyOnes = placeholdersList.filter((p) => !p.default_image_url);
+    const filledOnes = placeholdersList.filter((p) => p.default_image_url);
+
+    const initialLayers = filledOnes.map((p, i) => {
+      const fitMode = p.type === "character" ? "height" : p.type === "background" ? "stretch" : "contain";
+      return {
+        id: `layer_${nextId()}_${i}`,
+        slotId: p.id, slotType: p.type, src: p.default_image_url, fitMode,
+        x: p.x, y: p.y, width: p.width, height: p.height,
+        slotX: p.x, slotY: p.y, slotWidth: p.width, slotHeight: p.height,
+        rotation: p.rotation || 0, fitted: true, isBackground: p.type === "background",
+      };
+    });
+
+    // نبني "الخانات الفاضية" وتعبئتها من نفس بيانات التيمبلت مباشرة (متغيّر
+    // محلي)، مو عبر setSlots ثم قراءة state فوراً - state تحديثه غير متزامن،
+    // فالاعتماد عليه هون كان رح يعبّي فوق خانات التيمبلت القديم (السابق).
+    let remainingSlots = emptyOnes.map((p) => ({ ...p }));
+    const filledLayers = [];
+    selectedItems.forEach((item, i) => {
+      const targetType = CATEGORY_TO_SLOT_TYPE[item.category] || item.category;
+      const idx = remainingSlots.findIndex((s) => s.type === targetType);
+      if (idx === -1) return; // ما في خانة فاضية مناسبة لهالنوع، نتجاهله
+      const slot = remainingSlots[idx];
+      remainingSlots = remainingSlots.filter((_, si) => si !== idx);
+      const fitMode = targetType === "character" ? "height" : "contain";
+      filledLayers.push({
+        id: `layer_${nextId()}_ai_${i}`,
+        slotId: slot.id, slotType: slot.type, src: item.src, fitMode,
+        x: slot.x, y: slot.y, width: slot.width, height: slot.height,
+        slotX: slot.x, slotY: slot.y, slotWidth: slot.width, slotHeight: slot.height,
+        rotation: 0, fitted: false, isBackground: false,
+      });
+    });
+
+    setSlots(remainingSlots);
+    setLayers([...initialLayers, ...filledLayers]);
+    setSelectedId(null);
+  };
+
   const handleAIDesignConfirm = (selectedItems) => {
     setSmartFillOpen(false);
+
+    const bestTemplate = findBestMatchingTemplate(selectedItems);
+    if (bestTemplate) {
+      fillMatchedTemplate(bestTemplate, selectedItems);
+      return;
+    }
+
+    // بديل احتياطي: مافي أي تيمبلت محفوظ بعد بالحساب - نولّد تخطيط هندسي
+    // عام بدل ما نوقف المستخدم بلا نتيجة إطلاقاً.
     setPendingAIItems(selectedItems);
     setLayoutChooserOpen(true);
   };
@@ -710,7 +833,6 @@ export default function DesignStudio() {
 
     let remainingSlots = [...slots];
     const newLayers = [];
-    let filledAnyCharacter = false;
 
     selectedItems.forEach((item, i) => {
       const targetType = CATEGORY_TO_SLOT_TYPE[item.category] || item.category;
@@ -719,7 +841,6 @@ export default function DesignStudio() {
       const slot = remainingSlots[idx];
       remainingSlots = remainingSlots.filter((_, si) => si !== idx);
       const fitMode = targetType === "character" ? "height" : "contain";
-      if (targetType === "character") filledAnyCharacter = true;
       newLayers.push({
         id: `layer_${nextId()}_${i}`,
         slotId: slot.id,
@@ -744,9 +865,8 @@ export default function DesignStudio() {
     if (newLayers.length > 0) {
       setLayers((prev) => [...prev, ...newLayers]);
     }
-    if (filledAnyCharacter) {
-      unifyCharacterHeights();
-    }
+    // === أزلنا استدعاء unifyCharacterHeights() التلقائي هون كمان - نفس
+    // سبب fillImageSlot: يحترم أحجام الخانات المقصودة بالتيمبلت الأصلي ===
   };
 
   const replaceLayerImage = (src) => {
@@ -768,9 +888,10 @@ export default function DesignStudio() {
       )
     );
     setReplaceTargetId(null);
-    if (replacedLayer?.slotType === "character") {
-      unifyCharacterHeights();
-    }
+    // === أزلنا استدعاء unifyCharacterHeights() التلقائي هون كمان - كان
+    // يغيّر حجم الشخصية اللي استبدلتها لتصير بنفس ارتفاع الأغلبية، حتى لو
+    // كانت خانة مقصودة بحجم مختلف (زي شخصية مركزية أكبر). الاستبدال الآن
+    // يحافظ على حجم الخانة الأصلي بالضبط (slotWidth/slotHeight) بدون تدخل. ===
   };
 
   const startReplace = (layer) => {
@@ -851,7 +972,7 @@ export default function DesignStudio() {
     if (!layer) return;
     const width = node.width();
     const height = node.height();
-    const stops = getLineGuideStops(id, layers);
+    const stops = getLineGuideStops(id, layers, canvasWidth, canvasHeight);
     const bounds = getObjectSnappingEdges(node.x(), node.y(), width, height);
     const guides = computeSnapGuides(stops, bounds);
 
@@ -866,8 +987,8 @@ export default function DesignStudio() {
     setGuideLines(
       guides.map((g) =>
         g.orientation === "V"
-          ? [g.lineGuide, 0, g.lineGuide, CANVAS_HEIGHT]
-          : [0, g.lineGuide, CANVAS_WIDTH, g.lineGuide]
+          ? [g.lineGuide, 0, g.lineGuide, canvasHeight]
+          : [0, g.lineGuide, canvasWidth, g.lineGuide]
       )
     );
   };
@@ -890,10 +1011,10 @@ export default function DesignStudio() {
   };
 
   const addVerticalRuler = () => {
-    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "v", pos: CANVAS_WIDTH / 2 }]);
+    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "v", pos: canvasWidth / 2 }]);
   };
   const addHorizontalRuler = () => {
-    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "h", pos: CANVAS_HEIGHT / 2 }]);
+    setRulers((prev) => [...prev, { id: `ruler_${nextId()}`, type: "h", pos: canvasHeight / 2 }]);
   };
   const updateRulerPos = (id, pos) => {
     setRulers((prev) => prev.map((r) => (r.id === id ? { ...r, pos } : r)));
@@ -978,8 +1099,8 @@ export default function DesignStudio() {
 
       const { error } = await supabase.from("design_templates").insert({
         name: name.trim(),
-        canvas_width: CANVAS_WIDTH,
-        canvas_height: CANVAS_HEIGHT,
+        canvas_width: canvasWidth,
+        canvas_height: canvasHeight,
         placeholders: [...filledPlaceholders, ...emptyPlaceholders],
         owner_id: userData.user?.id,
         is_official: userData.user?.email === "mohammedbaraka842@gmail.com",
@@ -1031,7 +1152,7 @@ export default function DesignStudio() {
         >
           <span className="text-2xl">🤖</span>
           <p className="font-semibold mt-1 text-white">توليد سريع بالذكاء الاصطناعي</p>
-          <p className="text-purple-100 text-xs">اختر شخصياتك وأسلحتك، ويرتّبهم لك تلقائياً بضغطة وحدة</p>
+          <p className="text-purple-100 text-xs">اختر شخصياتك وأسلحتك، ونلاقيلك أقرب تيمبلت جاهز مطابق ونعبّيه فوراً</p>
         </button>
 
         <p className="text-neutral-600 text-xs mb-3">— أو اختر Quick Designer من التصاميم الجاهزة بالأسفل —</p>
@@ -1159,8 +1280,16 @@ export default function DesignStudio() {
         <button
           onClick={unifyCharacterHeights}
           className="bg-amber-600 hover:bg-amber-500 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+          title="يوحّد بس الشخصيات الجديدة (اللي لسه ما وحّدتها) - صف سابق وحّدته يضل بدون تغيير"
         >
-          📏 توحيد ارتفاع كل الشخصيات
+          📏 توحيد ارتفاع الشخصيات الجديدة
+        </button>
+        <button
+          onClick={resetHeightUnification}
+          className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 px-3 py-2 rounded-xl text-xs transition-colors"
+          title="لو تبي تعيد توحيد كل الشخصيات من الصفر (يمسح علامة 'مكتمل' من الكل)"
+        >
+          🔄 إعادة ضبط التوحيد
         </button>
         <button
           onClick={() => {
@@ -1256,8 +1385,8 @@ export default function DesignStudio() {
       >
         <Stage
           ref={stageRef}
-          width={CANVAS_WIDTH * scale}
-          height={CANVAS_HEIGHT * scale}
+          width={canvasWidth * scale}
+          height={canvasHeight * scale}
           scaleX={scale}
           scaleY={scale}
           onMouseDown={deselectOnEmptyClick}
@@ -1312,7 +1441,7 @@ export default function DesignStudio() {
               r.type === "v" ? (
                 <Line
                   key={r.id}
-                  points={[0, 0, 0, CANVAS_HEIGHT]}
+                  points={[0, 0, 0, canvasHeight]}
                   x={r.pos}
                   y={0}
                   stroke="#22d3ee"
@@ -1327,7 +1456,7 @@ export default function DesignStudio() {
               ) : (
                 <Line
                   key={r.id}
-                  points={[0, 0, CANVAS_WIDTH, 0]}
+                  points={[0, 0, canvasWidth, 0]}
                   x={0}
                   y={r.pos}
                   stroke="#22d3ee"
