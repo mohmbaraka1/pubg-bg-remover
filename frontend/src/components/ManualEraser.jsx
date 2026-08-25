@@ -231,8 +231,8 @@ export default function ManualEraser({ beforeUrl = null, resultBlob, onSave, onC
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 px-4 py-6">
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-4xl max-h-[95vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 sm:px-4 sm:py-6">
+      <div className="bg-neutral-900 border border-neutral-800 sm:rounded-2xl w-full h-full sm:h-auto sm:max-w-4xl sm:max-h-[95vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-neutral-800">
           <h2 className="text-lg font-bold">✏️ تعديل يدوي</h2>
           <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300 text-xl">

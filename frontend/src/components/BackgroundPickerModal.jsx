@@ -18,8 +18,8 @@ export default function BackgroundPickerModal({ onClose, onSelect }) {
   }, []);
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 sm:px-4">
+      <div className="bg-neutral-900 border border-neutral-800 sm:rounded-2xl w-full h-full sm:h-auto sm:max-w-3xl sm:max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-neutral-800">
           <h2 className="text-lg font-bold">اختر خلفية</h2>
           <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300 text-xl">
