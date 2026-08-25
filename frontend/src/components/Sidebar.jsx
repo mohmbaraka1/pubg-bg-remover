@@ -55,7 +55,7 @@ export default function Sidebar({ mobileOpen = false, onClose = () => {} }) {
           من md وفوق: شريط ثابت دايماً بنفس السلوك القديم بالضبط. */}
       <aside
         className={`w-64 shrink-0 h-screen fixed md:sticky top-0 z-50 bg-neutral-950 border-r border-neutral-800 flex flex-col py-6 px-3 transition-transform duration-200 ${
-          mobileOpen ? "translate-x-0" : "translate-x-full md:translate-x-0"
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         } start-auto end-0 md:start-0 md:end-auto`}
       >
         <div className="flex items-center justify-between px-3 mb-8">
